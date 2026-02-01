@@ -41,10 +41,15 @@ type ScrollMsg struct {
 // Cmd is a function that runs asynchronously and returns a Msg.
 type Cmd func() Msg
 
+// Sub is a long-running command that can send multiple messages via the send callback.
+// It returns a final Msg when done (or nil).
+type Sub func(send func(Msg)) Msg
+
 // UpdateResult is returned from Update: new model + optional async commands.
 type UpdateResult struct {
 	Model interface{}
 	Cmds  []Cmd
+	Subs  []Sub
 }
 
 // NoCmd returns an UpdateResult with no commands.
@@ -55,6 +60,11 @@ func NoCmd(model interface{}) UpdateResult {
 // WithCmd returns an UpdateResult with commands to execute.
 func WithCmd(model interface{}, cmds ...Cmd) UpdateResult {
 	return UpdateResult{Model: model, Cmds: cmds}
+}
+
+// WithSub returns an UpdateResult with subscriptions.
+func WithSub(model interface{}, subs ...Sub) UpdateResult {
+	return UpdateResult{Model: model, Subs: subs}
 }
 
 // App defines an Elm-style TUI application.
@@ -222,6 +232,15 @@ func (a *App) Run(ctx context.Context) error {
 				c := cmd
 				go func() {
 					if m := c(); m != nil {
+						cmdCh <- m
+					}
+				}()
+			}
+			// Launch subscriptions
+			for _, sub := range result.Subs {
+				s := sub
+				go func() {
+					if m := s(func(msg Msg) { cmdCh <- msg }); m != nil {
 						cmdCh <- m
 					}
 				}()

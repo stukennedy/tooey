@@ -1,5 +1,7 @@
 package node
 
+import "strings"
+
 // NodeType identifies the kind of UI node.
 type NodeType int
 
@@ -128,4 +130,87 @@ func (n Node) WithScrollOffset(offset int) Node {
 func (n Node) WithScrollToBottom() Node {
 	n.Props.ScrollToBottom = true
 	return n
+}
+
+// Bar creates a full-width text node with background color fill.
+// Use in a Row; the FlexWeight=1 causes it to stretch to fill available width.
+func Bar(text string, fg, bg Color, style StyleFlags) Node {
+	return TextStyled(text, fg, bg, style).WithFlex(1)
+}
+
+// Separator returns a horizontal line of the given width using "─".
+func Separator(width int) Node {
+	return TextStyled(strings.Repeat("─", width), 245, 0, 0)
+}
+
+// SeparatorStyled returns a horizontal line with a custom character and color.
+func SeparatorStyled(ch rune, width int, fg Color) Node {
+	return TextStyled(strings.Repeat(string(ch), width), fg, 0, 0)
+}
+
+// Truncate truncates text to maxWidth, adding "…" if it exceeds the limit.
+func Truncate(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxWidth {
+		return text
+	}
+	if maxWidth == 1 {
+		return "…"
+	}
+	return string(runes[:maxWidth-1]) + "…"
+}
+
+// Indent wraps a child node with left indentation.
+func Indent(spaces int, child Node) Node {
+	return Row(Text(strings.Repeat(" ", spaces)), child)
+}
+
+// Pad wraps a child node with padding on all sides.
+func Pad(top, right, bottom, left int, child Node) Node {
+	padded := child
+	if left > 0 || right > 0 {
+		var row []Node
+		if left > 0 {
+			row = append(row, Text(strings.Repeat(" ", left)))
+		}
+		row = append(row, padded)
+		if right > 0 {
+			row = append(row, Text(strings.Repeat(" ", right)))
+		}
+		padded = Row(row...)
+	}
+	var col []Node
+	for i := 0; i < top; i++ {
+		col = append(col, Text(""))
+	}
+	col = append(col, padded)
+	for i := 0; i < bottom; i++ {
+		col = append(col, Text(""))
+	}
+	return Column(col...)
+}
+
+// ParagraphOpts configures Paragraph rendering.
+type ParagraphOpts struct {
+	FG    Color
+	BG    Color
+	Style StyleFlags
+}
+
+// Paragraph splits text on newlines and returns a Column of styled text lines.
+func Paragraph(text string, fg, bg Color, style StyleFlags) Node {
+	return ParagraphStyled(text, ParagraphOpts{FG: fg, BG: bg, Style: style})
+}
+
+// ParagraphStyled splits text on newlines using ParagraphOpts.
+func ParagraphStyled(text string, opts ParagraphOpts) Node {
+	lines := strings.Split(text, "\n")
+	children := make([]Node, len(lines))
+	for i, line := range lines {
+		children[i] = TextStyled(line, opts.FG, opts.BG, opts.Style)
+	}
+	return Column(children...)
 }

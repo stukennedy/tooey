@@ -2,6 +2,7 @@ package component
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/stukennedy/tooey/input"
 	"github.com/stukennedy/tooey/node"
@@ -57,6 +58,10 @@ func (ti TextInput) Update(key input.Key) TextInput {
 		ti.Cursor = moveCursorUp(runes, ti.Cursor)
 	case input.Down:
 		ti.Cursor = moveCursorDown(runes, ti.Cursor)
+	case input.AltLeft:
+		ti.Cursor = wordLeft(runes, ti.Cursor)
+	case input.AltRight:
+		ti.Cursor = wordRight(runes, ti.Cursor)
 	}
 	ti.Value = string(runes)
 	return ti
@@ -79,7 +84,9 @@ func (ti TextInput) LineCount() int {
 }
 
 // Render returns a node tree displaying the multi-line input with cursor.
-func (ti TextInput) Render(prefix string, fg, bg node.Color) node.Node {
+// If width > 0, text is word-wrapped to fit within that width.
+// If width is 0, no wrapping is performed (backward compatible).
+func (ti TextInput) Render(prefix string, fg, bg node.Color, width int) node.Node {
 	if ti.Value == "" {
 		// Show cursor block + placeholder when focused and empty
 		if ti.Focused {
@@ -93,25 +100,58 @@ func (ti TextInput) Render(prefix string, fg, bg node.Color) node.Node {
 	}
 
 	runes := []rune(ti.Value)
-	lines := splitLines(string(runes))
+	prefixWidth := len([]rune(prefix))
+	contPrefix := strings.Repeat(" ", prefixWidth)
 
-	// Find which line the cursor is on and its column offset
-	cursorLine, cursorCol := cursorPosition(runes, ti.Cursor)
+	// Split into logical lines (from newlines), then word-wrap each
+	logicalLines := splitLines(string(runes))
+	type displayLine struct {
+		text      string
+		runeStart int // rune offset in the full Value where this display line starts
+	}
+	var displayLines []displayLine
+	runeOffset := 0
+	for i, line := range logicalLines {
+		lp := prefixWidth
+		if i > 0 {
+			lp = prefixWidth // continuation prefix same width
+		}
+		wrapped := wrapLine(line, width, lp)
+		for _, wl := range wrapped {
+			displayLines = append(displayLines, displayLine{text: wl, runeStart: runeOffset})
+			runeOffset += len([]rune(wl))
+		}
+		runeOffset++ // account for the \n between logical lines
+	}
 
-	// Continuation lines indent to align with text after prefix
-	contPrefix := strings.Repeat(" ", len([]rune(prefix)))
+	// Find which display line the cursor is on
+	cursorDisplayLine := 0
+	cursorCol := 0
+	for di, dl := range displayLines {
+		dlLen := len([]rune(dl.text))
+		if ti.Cursor >= dl.runeStart && ti.Cursor <= dl.runeStart+dlLen {
+			// Cursor is on this line (prefer earliest line if at boundary between lines)
+			if ti.Cursor == dl.runeStart+dlLen && di+1 < len(displayLines) && displayLines[di+1].runeStart == ti.Cursor {
+				// Cursor is at the very end of this line and start of next wrapped line;
+				// place it at the start of the next line
+				continue
+			}
+			cursorDisplayLine = di
+			cursorCol = ti.Cursor - dl.runeStart
+			break
+		}
+	}
 
 	var lineNodes []node.Node
-	for i, line := range lines {
+	for i, dl := range displayLines {
 		var ln node.Node
 		linePrefix := contPrefix
 		if i == 0 {
 			linePrefix = prefix
 		}
 
-		if i == cursorLine && ti.Focused {
-			// This line has the cursor
-			lineRunes := []rune(line)
+		if i == cursorDisplayLine && ti.Focused {
+			lineRunes := []rune(dl.text)
 			before := string(lineRunes[:cursorCol])
 			var cursorChar string
 			var after string
@@ -127,7 +167,7 @@ func (ti TextInput) Render(prefix string, fg, bg node.Color) node.Node {
 				node.TextStyled(after, fg, bg, 0),
 			)
 		} else {
-			ln = node.TextStyled(linePrefix+line, fg, bg, 0)
+			ln = node.TextStyled(linePrefix+dl.text, fg, bg, 0)
 		}
 		lineNodes = append(lineNodes, ln)
 	}
@@ -213,4 +253,83 @@ func moveCursorDown(runes []rune, cursor int) int {
 		col = nextLineLen
 	}
 	return nextLineStart + col
+}
+
+// wordLeft moves the cursor to the start of the previous word.
+func wordLeft(runes []rune, cursor int) int {
+	if cursor <= 0 {
+		return 0
+	}
+	i := cursor - 1
+	// Skip whitespace/punctuation backward
+	for i > 0 && !unicode.IsLetter(runes[i]) && !unicode.IsDigit(runes[i]) {
+		i--
+	}
+	// Skip word characters backward
+	for i > 0 && (unicode.IsLetter(runes[i-1]) || unicode.IsDigit(runes[i-1])) {
+		i--
+	}
+	return i
+}
+
+// wordRight moves the cursor to the start of the next word.
+func wordRight(runes []rune, cursor int) int {
+	n := len(runes)
+	if cursor >= n {
+		return n
+	}
+	i := cursor
+	// Skip current word characters forward
+	for i < n && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i])) {
+		i++
+	}
+	// Skip whitespace/punctuation forward
+	for i < n && !unicode.IsLetter(runes[i]) && !unicode.IsDigit(runes[i]) {
+		i++
+	}
+	return i
+}
+
+// wrapLine word-wraps a single line to fit within the given width.
+// prefixWidth is the width consumed by the line prefix.
+// If width is 0, no wrapping is performed.
+func wrapLine(line string, width, prefixWidth int) []string {
+	if width <= 0 {
+		return []string{line}
+	}
+	availWidth := width - prefixWidth
+	if availWidth <= 0 {
+		availWidth = 1
+	}
+
+	runes := []rune(line)
+	if len(runes) <= availWidth {
+		return []string{line}
+	}
+
+	var result []string
+	for len(runes) > 0 {
+		if len(runes) <= availWidth {
+			result = append(result, string(runes))
+			break
+		}
+		// Find the last space at or before availWidth
+		breakAt := -1
+		for i := availWidth; i >= 0; i-- {
+			if i < len(runes) && runes[i] == ' ' {
+				breakAt = i
+				break
+			}
+		}
+		if breakAt <= 0 {
+			// No space found — break at availWidth (mid-word as fallback)
+			breakAt = availWidth
+			result = append(result, string(runes[:breakAt]))
+			runes = runes[breakAt:]
+		} else {
+			result = append(result, string(runes[:breakAt]))
+			runes = runes[breakAt+1:] // skip the space
+		}
+	}
+	return result
 }

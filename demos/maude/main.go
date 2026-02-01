@@ -248,7 +248,7 @@ func maudeView(m interface{}, focused string) node.Node {
 		WithScrollOffset(mdl.scrollOffset)
 
 	// --- Input area ---
-	inputLine := mdl.input.Render("  > ", colWhite, 0)
+	inputLine := mdl.input.Render("  > ", colWhite, 0, 0)
 
 	// --- Bottom border ---
 	bottomBorder := node.TextStyled(strings.Repeat("─", w), colDimGray, 0, 0)

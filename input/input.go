@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -41,6 +42,8 @@ const (
 	MouseClick
 	MouseScrollUp
 	MouseScrollDown
+	AltLeft
+	AltRight
 )
 
 // Key represents a keyboard input event.
@@ -54,35 +57,124 @@ type ResizeMsg struct {
 	Width, Height int
 }
 
+// escTimeout is how long to wait after receiving a lone ESC byte before
+// deciding it's a bare Escape press rather than the start of a CSI sequence.
+const escTimeout = 50 * time.Millisecond
+
+type readResult struct {
+	data []byte
+	err  error
+}
+
 // ReadKeys reads raw terminal input and sends parsed Key events.
+// It uses a timeout to disambiguate bare Escape from ESC-prefixed sequences.
 func ReadKeys(ctx context.Context, r io.Reader) <-chan Key {
 	ch := make(chan Key, 32)
+
+	// Raw byte reader goroutine — feeds chunks into rawCh
+	rawCh := make(chan readResult, 4)
+	go func() {
+		defer close(rawCh)
+		buf := make([]byte, 256)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				rawCh <- readResult{data: data}
+			}
+			if err != nil {
+				rawCh <- readResult{err: err}
+				return
+			}
+		}
+	}()
+
+	// Key parser goroutine — reads from rawCh, handles ESC disambiguation
 	go func() {
 		defer close(ch)
-		buf := make([]byte, 64)
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
-			}
-
-			n, err := r.Read(buf)
-			if err != nil {
-				return
-			}
-
-			keys := parseInput(buf[:n])
-			for _, k := range keys {
-				select {
-				case ch <- k:
-				case <-ctx.Done():
+			case rr, ok := <-rawCh:
+				if !ok || rr.err != nil {
 					return
+				}
+				data := rr.data
+
+				// Check if data ends with a lone ESC byte
+				if data[len(data)-1] == 0x1b {
+					// Parse everything before the trailing ESC
+					if len(data) > 1 {
+						for _, k := range parseInput(data[:len(data)-1]) {
+							if !send(ch, ctx, k) {
+								return
+							}
+						}
+					}
+					// Wait briefly: is this bare Escape or start of a CSI?
+					select {
+					case <-ctx.Done():
+						return
+					case rr2, ok := <-rawCh:
+						if !ok || rr2.err != nil {
+							// No more data — it was bare Escape
+							send(ch, ctx, Key{Type: Escape})
+							return
+						}
+						// Got follow-up data — check if it continues an escape sequence
+						if rr2.data[0] == '[' {
+							// Combine ESC + new data as a single escape sequence
+							combined := make([]byte, 1+len(rr2.data))
+							combined[0] = 0x1b
+							copy(combined[1:], rr2.data)
+							for _, k := range parseInput(combined) {
+								if !send(ch, ctx, k) {
+									return
+								}
+							}
+						} else {
+							// Not a CSI continuation — emit Escape, then parse new data
+							if !send(ch, ctx, Key{Type: Escape}) {
+								return
+							}
+							for _, k := range parseInput(rr2.data) {
+								if !send(ch, ctx, k) {
+									return
+								}
+							}
+						}
+					case <-time.After(escTimeout):
+						// Timeout — bare Escape
+						if !send(ch, ctx, Key{Type: Escape}) {
+							return
+						}
+					}
+					continue
+				}
+
+				// Normal case: parse all bytes
+				for _, k := range parseInput(data) {
+					if !send(ch, ctx, k) {
+						return
+					}
 				}
 			}
 		}
 	}()
+
 	return ch
+}
+
+func send(ch chan<- Key, ctx context.Context, k Key) bool {
+	select {
+	case ch <- k:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // WatchResize listens for SIGWINCH and sends ResizeMsg events.
@@ -199,6 +291,15 @@ func parseCSI(data []byte) (Key, int) {
 	case 'O':
 		return Key{Type: FocusOut}, 1
 	}
+	// Handle modifier sequences like \x1b[1;3D (Alt+Left), \x1b[1;3C (Alt+Right)
+	if len(data) >= 4 && data[0] == '1' && data[1] == ';' && data[2] == '3' {
+		switch data[3] {
+		case 'D':
+			return Key{Type: AltLeft}, 4
+		case 'C':
+			return Key{Type: AltRight}, 4
+		}
+	}
 	// Handle sequences like \x1b[5~ (PageUp), \x1b[6~ (PageDown), \x1b[3~ (Delete)
 	if len(data) >= 2 && data[1] == '~' {
 		switch data[0] {
@@ -220,7 +321,6 @@ func parseCSI(data []byte) (Key, int) {
 	if len(data) >= 1 && data[0] == '<' {
 		for j := 1; j < len(data); j++ {
 			if data[j] == 'M' || data[j] == 'm' {
-				// Parse button number from data[1:j] (e.g. "64;10;20")
 				btn := parseSGRButton(data[1:j])
 				kt := MouseClick
 				switch btn {
@@ -270,7 +370,6 @@ func decodeRune(data []byte) (rune, int) {
 	if b < 0x80 {
 		return rune(b), 1
 	}
-	// Simple UTF-8 decode
 	var r rune
 	var size int
 	switch {

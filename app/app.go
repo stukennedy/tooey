@@ -164,6 +164,7 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			width, height = r.Width, r.Height
 			prevBuf = nil // force full redraw
+			ansi.ClearScreen(out) // clear stale content when terminal size changes
 			msgs = append(msgs, ResizeMsg{Width: width, Height: height})
 			needsRender = true
 		case cmdMsg := <-cmdCh:

@@ -33,6 +33,11 @@ type FocusMsg struct {
 	Focused bool
 }
 
+// PasteMsg carries text from a bracketed paste event.
+type PasteMsg struct {
+	Text string
+}
+
 // ScrollMsg indicates a mouse scroll event. Delta is positive for scroll up, negative for scroll down.
 type ScrollMsg struct {
 	Delta int
@@ -105,8 +110,10 @@ func (a *App) Run(ctx context.Context) error {
 	ansi.HideCursor(out)
 	ansi.EnableFocusReporting(out)
 	ansi.EnableMouseReporting(out)
+	ansi.EnableBracketedPaste(out)
 	ansi.ClearScreen(out)
 	defer func() {
+		ansi.DisableBracketedPaste(out)
 		ansi.DisableMouseReporting(out)
 		ansi.DisableFocusReporting(out)
 		ansi.ShowCursor(out)
@@ -142,9 +149,6 @@ func (a *App) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if k.Type == input.CtrlC {
-				return nil
-			}
 			switch k.Type {
 			case input.FocusIn:
 				msgs = append(msgs, FocusMsg{Focused: true})
@@ -154,6 +158,8 @@ func (a *App) Run(ctx context.Context) error {
 				msgs = append(msgs, ScrollMsg{Delta: 3})
 			case input.MouseScrollDown:
 				msgs = append(msgs, ScrollMsg{Delta: -3})
+			case input.Paste:
+				msgs = append(msgs, PasteMsg{Text: k.Text})
 			default:
 				msgs = append(msgs, KeyMsg{Key: k})
 			}
@@ -163,8 +169,8 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 			width, height = r.Width, r.Height
-			prevBuf = nil // force full redraw
-			ansi.ClearScreen(out) // clear stale content when terminal size changes
+			ansi.ClearScreen(out) // clear stale content in newly exposed areas
+			prevBuf = nil         // force full redraw
 			msgs = append(msgs, ResizeMsg{Width: width, Height: height})
 			needsRender = true
 		case cmdMsg := <-cmdCh:
@@ -183,14 +189,13 @@ func (a *App) Run(ctx context.Context) error {
 					draining = false
 					continue
 				}
-				if k.Type == input.CtrlC {
-					return nil
-				}
 				switch k.Type {
 				case input.FocusIn:
 					msgs = append(msgs, FocusMsg{Focused: true})
 				case input.FocusOut:
 					msgs = append(msgs, FocusMsg{Focused: false})
+				case input.Paste:
+					msgs = append(msgs, PasteMsg{Text: k.Text})
 				default:
 					msgs = append(msgs, KeyMsg{Key: k})
 				}

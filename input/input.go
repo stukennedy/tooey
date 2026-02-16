@@ -44,12 +44,16 @@ const (
 	MouseScrollDown
 	AltLeft
 	AltRight
+	AltUp
+	AltDown
+	Paste // Bracketed paste — Key.Rune is unused; full text is in Key.Text
 )
 
 // Key represents a keyboard input event.
 type Key struct {
 	Type KeyType
 	Rune rune
+	Text string // used for Paste events to carry the full pasted text
 }
 
 // ResizeMsg indicates the terminal was resized.
@@ -75,7 +79,7 @@ func ReadKeys(ctx context.Context, r io.Reader) <-chan Key {
 	rawCh := make(chan readResult, 4)
 	go func() {
 		defer close(rawCh)
-		buf := make([]byte, 256)
+		buf := make([]byte, 4096)
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
@@ -94,6 +98,8 @@ func ReadKeys(ctx context.Context, r io.Reader) <-chan Key {
 	go func() {
 		defer close(ch)
 
+		var pasteBuf []byte // non-nil when inside a bracketed paste
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -103,6 +109,30 @@ func ReadKeys(ctx context.Context, r io.Reader) <-chan Key {
 					return
 				}
 				data := rr.data
+
+				// If we're inside a paste, buffer data until we find the end marker
+				if pasteBuf != nil {
+					pasteBuf = append(pasteBuf, data...)
+					end := indexBytes(pasteBuf, pasteEnd)
+					if end < 0 {
+						continue // keep buffering
+					}
+					text := string(pasteBuf[:end])
+					if !send(ch, ctx, Key{Type: Paste, Text: text}) {
+						return
+					}
+					// Process any data after the paste end marker
+					remainder := pasteBuf[end+len(pasteEnd):]
+					pasteBuf = nil
+					if len(remainder) > 0 {
+						for _, k := range parseInput(remainder) {
+							if !send(ch, ctx, k) {
+								return
+							}
+						}
+					}
+					continue
+				}
 
 				// Check if data ends with a lone ESC byte
 				if data[len(data)-1] == 0x1b {
@@ -151,6 +181,35 @@ func ReadKeys(ctx context.Context, r io.Reader) <-chan Key {
 						if !send(ch, ctx, Key{Type: Escape}) {
 							return
 						}
+					}
+					continue
+				}
+
+				// Check if data contains a paste start with no end marker
+				// (parseInput handles complete pastes internally)
+				pasteIdx := indexBytes(data, pasteStart)
+				if pasteIdx >= 0 {
+					// Parse any keys before the paste start
+					if pasteIdx > 0 {
+						for _, k := range parseInput(data[:pasteIdx]) {
+							if !send(ch, ctx, k) {
+								return
+							}
+						}
+					}
+					// Check if the complete paste is in this buffer
+					after := data[pasteIdx+len(pasteStart):]
+					endIdx := indexBytes(after, pasteEnd)
+					if endIdx >= 0 {
+						// Complete paste in this buffer — parseInput handles it
+						for _, k := range parseInput(data[pasteIdx:]) {
+							if !send(ch, ctx, k) {
+								return
+							}
+						}
+					} else {
+						// Partial paste — start buffering from after the start marker
+						pasteBuf = append([]byte{}, after...)
 					}
 					continue
 				}
@@ -211,11 +270,32 @@ func TermSize() (int, int) {
 	return w, h
 }
 
+// pasteStart is the bracketed paste mode start marker.
+var pasteStart = []byte{0x1b, '[', '2', '0', '0', '~'}
+
+// pasteEnd is the bracketed paste mode end marker.
+var pasteEnd = []byte{0x1b, '[', '2', '0', '1', '~'}
+
 // parseInput parses raw bytes into Key events.
 func parseInput(data []byte) []Key {
 	var keys []Key
 	i := 0
 	for i < len(data) {
+		// Check for bracketed paste start (complete paste within this buffer)
+		if hasPrefixAt(data, i, pasteStart) {
+			start := i + len(pasteStart)
+			end := indexBytes(data[start:], pasteEnd)
+			if end >= 0 {
+				text := string(data[start : start+end])
+				keys = append(keys, Key{Type: Paste, Text: text})
+				i = start + end + len(pasteEnd)
+				continue
+			}
+			// No end marker found — this is a partial paste that spans reads.
+			// Skip remaining bytes; ReadKeys handles cross-read buffering.
+			return keys
+		}
+
 		if data[i] == 0x1b { // ESC
 			if i+1 < len(data) && data[i+1] == '[' {
 				// CSI sequence
@@ -223,6 +303,14 @@ func parseInput(data []byte) []Key {
 				if consumed > 0 {
 					keys = append(keys, k)
 					i += 2 + consumed
+					continue
+				}
+				// Unrecognized CSI — skip the entire sequence rather than
+				// emitting a bare Escape. CSI sequences end with a byte
+				// in the range 0x40-0x7E (the "final byte").
+				skipped := skipCSI(data[i+2:])
+				if skipped > 0 {
+					i += 2 + skipped
 					continue
 				}
 			}
@@ -294,10 +382,14 @@ func parseCSI(data []byte) (Key, int) {
 	// Handle modifier sequences like \x1b[1;3D (Alt+Left), \x1b[1;3C (Alt+Right)
 	if len(data) >= 4 && data[0] == '1' && data[1] == ';' && data[2] == '3' {
 		switch data[3] {
-		case 'D':
-			return Key{Type: AltLeft}, 4
+		case 'A':
+			return Key{Type: AltUp}, 4
+		case 'B':
+			return Key{Type: AltDown}, 4
 		case 'C':
 			return Key{Type: AltRight}, 4
+		case 'D':
+			return Key{Type: AltLeft}, 4
 		}
 	}
 	// Handle sequences like \x1b[5~ (PageUp), \x1b[6~ (PageDown), \x1b[3~ (Delete)
@@ -348,6 +440,19 @@ func parseCSI(data []byte) (Key, int) {
 	return Key{}, 0
 }
 
+// skipCSI finds the end of an unrecognized CSI sequence and returns how many
+// bytes to skip (after the ESC[). CSI parameter bytes are in 0x30-0x3F,
+// intermediate bytes in 0x20-0x2F, and the final byte in 0x40-0x7E.
+func skipCSI(data []byte) int {
+	for j := 0; j < len(data); j++ {
+		b := data[j]
+		if b >= 0x40 && b <= 0x7E {
+			return j + 1 // include the final byte
+		}
+	}
+	return 0 // no final byte found — incomplete sequence
+}
+
 // parseSGRButton extracts the button number from SGR mouse data like "64;10;20".
 func parseSGRButton(data []byte) int {
 	n := 0
@@ -392,4 +497,34 @@ func decodeRune(data []byte) (rune, int) {
 		r = r<<6 | rune(data[i]&0x3F)
 	}
 	return r, size
+}
+
+// hasPrefixAt checks if data[offset:] starts with prefix.
+func hasPrefixAt(data []byte, offset int, prefix []byte) bool {
+	if offset+len(prefix) > len(data) {
+		return false
+	}
+	for i, b := range prefix {
+		if data[offset+i] != b {
+			return false
+		}
+	}
+	return true
+}
+
+// indexBytes finds the first occurrence of needle in haystack, returning -1 if not found.
+func indexBytes(haystack, needle []byte) int {
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		found := true
+		for j, b := range needle {
+			if haystack[i+j] != b {
+				found = false
+				break
+			}
+		}
+		if found {
+			return i
+		}
+	}
+	return -1
 }

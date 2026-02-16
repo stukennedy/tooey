@@ -103,3 +103,11 @@ func EnableMouseReporting(w io.Writer) {
 func DisableMouseReporting(w io.Writer) {
 	fmt.Fprint(w, "\x1b[?1006l\x1b[?1000l")
 }
+
+func EnableBracketedPaste(w io.Writer) {
+	fmt.Fprint(w, "\x1b[?2004h")
+}
+
+func DisableBracketedPaste(w io.Writer) {
+	fmt.Fprint(w, "\x1b[?2004l")
+}

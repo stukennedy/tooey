@@ -67,6 +67,19 @@ func (ti TextInput) Update(key input.Key) TextInput {
 	return ti
 }
 
+// Paste inserts text at the cursor position in a single operation.
+func (ti TextInput) Paste(text string) TextInput {
+	runes := []rune(ti.Value)
+	pasteRunes := []rune(text)
+	newRunes := make([]rune, 0, len(runes)+len(pasteRunes))
+	newRunes = append(newRunes, runes[:ti.Cursor]...)
+	newRunes = append(newRunes, pasteRunes...)
+	newRunes = append(newRunes, runes[ti.Cursor:]...)
+	ti.Value = string(newRunes)
+	ti.Cursor += len(pasteRunes)
+	return ti
+}
+
 // Submit returns the current value and resets the input.
 func (ti TextInput) Submit() (string, TextInput) {
 	val := strings.TrimSpace(ti.Value)

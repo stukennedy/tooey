@@ -119,6 +119,67 @@ func TestTextWrapNarrow(t *testing.T) {
 	}
 }
 
+func TestRowWithBoxChildHeight(t *testing.T) {
+	// Simulates Indent(2, Box(Column(TextStyled(...)))) — a code block with indent.
+	// The Row should get the height of the Box (content + 2 border rows), not 1.
+	codeBlock := node.Box(node.BorderRounded, node.Column(
+		node.TextStyled("go install github.com/stukennedy/kyotee@latest", 45, 236, 0),
+	))
+	indented := node.Row(node.Text("  "), codeBlock)
+
+	// Measure height of the Row — should be 3 (1 code line + 2 border rows)
+	h := measureHeight(indented, Rect{0, 0, 80, 24})
+	if h != 3 {
+		t.Fatalf("Row with Box: expected height 3, got %d", h)
+	}
+
+	// Full layout: Column containing text, the indented code block, and more text
+	tree := node.Column(
+		node.Text("To install kyotee, run:"),
+		indented,
+		node.Text("This downloads the source."),
+	)
+	ln := Layout(tree, 80, 24)
+
+	// Column should have 3 children
+	if len(ln.Children) != 3 {
+		t.Fatalf("expected 3 children, got %d", len(ln.Children))
+	}
+
+	// First child: text at Y=0, height=1
+	if ln.Children[0].Rect.Y != 0 || ln.Children[0].Rect.H != 1 {
+		t.Fatalf("child 0: Y=%d H=%d", ln.Children[0].Rect.Y, ln.Children[0].Rect.H)
+	}
+
+	// Second child (indented code block Row): Y=1, height=3
+	if ln.Children[1].Rect.Y != 1 {
+		t.Fatalf("child 1 (code row): Y=%d, expected 1", ln.Children[1].Rect.Y)
+	}
+	if ln.Children[1].Rect.H != 3 {
+		t.Fatalf("child 1 (code row): H=%d, expected 3", ln.Children[1].Rect.H)
+	}
+
+	// Third child: text after code block, Y=4
+	if ln.Children[2].Rect.Y != 4 {
+		t.Fatalf("child 2 (after code): Y=%d, expected 4", ln.Children[2].Rect.Y)
+	}
+}
+
+func TestRowMeasureHeightMultiLineBox(t *testing.T) {
+	// Box with 3 lines of code: height should be 5 (3 + 2 borders)
+	codeBlock := node.Box(node.BorderRounded, node.Column(
+		node.Text("line 1"),
+		node.Text("line 2"),
+		node.Text("line 3"),
+	))
+	row := node.Row(node.Text("  "), codeBlock)
+
+	h := measureHeight(row, Rect{0, 0, 80, 24})
+	if h != 5 {
+		t.Fatalf("Row with 3-line Box: expected height 5, got %d", h)
+	}
+}
+
 func TestExplicitSize(t *testing.T) {
 	n := node.Text("hello world that wraps").WithSize(10, 1)
 	ln := Layout(n, 80, 24)

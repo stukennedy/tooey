@@ -253,6 +253,15 @@ func measureHeight(n node.Node, avail Rect) int {
 			h += measureHeight(c, avail)
 		}
 		return h
+	case node.RowNode:
+		h := 1
+		for _, c := range n.Children {
+			ch := measureHeight(c, avail)
+			if ch > h {
+				h = ch
+			}
+		}
+		return h
 	default:
 		return 1
 	}

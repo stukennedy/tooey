@@ -40,6 +40,7 @@ type Props struct {
 	ScrollToBottom bool    `json:"scrollToBottom,omitempty"`
 	Padding        *[4]int `json:"padding,omitempty"` // top, right, bottom, left
 	NoWrap         bool    `json:"noWrap,omitempty"`
+	FocusScope     bool    `json:"focusScope,omitempty"`
 }
 
 // Color wraps node.Color with a wire-friendly JSON form: a palette
@@ -160,6 +161,7 @@ func fromProps(p node.Props) *Props {
 		ScrollOffset:   p.ScrollOffset,
 		ScrollToBottom: p.ScrollToBottom,
 		NoWrap:         p.NoWrap,
+		FocusScope:     p.FocusScope,
 	}
 	if !p.FG.IsDefault() {
 		wp.FG = &Color{p.FG}
@@ -224,6 +226,7 @@ func (wp Props) toProps() (node.Props, error) {
 		ScrollOffset:   wp.ScrollOffset,
 		ScrollToBottom: wp.ScrollToBottom,
 		NoWrap:         wp.NoWrap,
+		FocusScope:     wp.FocusScope,
 	}
 	if wp.FG != nil {
 		p.FG = wp.FG.Color

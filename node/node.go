@@ -138,6 +138,12 @@ type Props struct {
 	// NoWrap disables word-wrapping for Text: lines render as-is and
 	// clip at the node's edge (used for pre-aligned content like tables).
 	NoWrap bool
+
+	// FocusScope traps focus inside this subtree while it is rendered:
+	// Tab cycling and click-to-focus only reach focusables within the
+	// topmost scope. Opening a scope saves the current focus; removing
+	// it restores it. Give scopes a Key so nested scopes stay stable.
+	FocusScope bool
 }
 
 // Node represents a virtual UI element in the component tree.
@@ -272,6 +278,13 @@ func (n Node) WithPaddingAll(p int) Node {
 // WithNoWrap disables word-wrapping; over-wide lines clip at the edge.
 func (n Node) WithNoWrap() Node {
 	n.Props.NoWrap = true
+	return n
+}
+
+// WithFocusScope traps focus inside this subtree while it is rendered
+// (e.g. a modal overlay layer). See Props.FocusScope.
+func (n Node) WithFocusScope() Node {
+	n.Props.FocusScope = true
 	return n
 }
 

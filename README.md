@@ -161,6 +161,7 @@ Return `app.Quit(model)` to quit.
 | `app.FocusMsg` | Terminal focus gained/lost |
 | `app.ScrollMsg` | Mouse scroll wheel (with cursor position) |
 | `app.ClickMsg` | Mouse click — carries `X`, `Y`, and the `Key` of the node under the cursor |
+| `app.FocusChangedMsg` | Focused node changed (Tab, click, or focus scope open/close) — carries the new `Key` |
 | `app.PasteMsg` | Bracketed paste |
 
 Clicks are hit-tested against the rendered layout: clicking a focusable
@@ -194,13 +195,23 @@ return node.Overlay(mainUI, node.Centered(modal))
 
 ## Focus management
 
-Tooey manages focus automatically. Mark nodes as focusable, give them a key, and the framework handles Tab/Shift-Tab cycling and Escape to pop context:
+Tooey manages focus automatically. Mark nodes as focusable, give them a key, and the framework handles Tab/Shift-Tab cycling and click-to-focus:
 
 ```go
 node.Text("clickable").WithKey("btn-1").WithFocusable()
 ```
 
-The `focused` string passed to your View function is the key of the currently focused node.
+The `focused` string passed to your View function is the key of the currently focused node. When Update needs to know it too (e.g. Enter should activate the focused button), mirror `app.FocusChangedMsg` into your model.
+
+**Focus scopes** trap focus declaratively — mark a subtree (typically a modal overlay layer) and, while it renders, Tab and clicks only reach focusables inside it. Opening the scope saves the current focus; removing it from the view restores it. Nested scopes stack:
+
+```go
+dialog := node.Box(node.BorderRounded, buttons).
+    WithKey("confirm").WithFocusScope()
+return node.Overlay(mainUI, node.Centered(dialog))
+```
+
+No imperative push/pop — like everything else, the active focus scope is a pure function of the view. See `demos/list` for a working confirm dialog.
 
 ## Scrolling
 

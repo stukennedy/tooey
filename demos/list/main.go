@@ -13,9 +13,11 @@ import (
 )
 
 type model struct {
-	items    []string
-	selected int
-	counter  int
+	items     []string
+	selected  int
+	counter   int
+	modalOpen bool
+	focused   string // mirrored from app.FocusChangedMsg
 }
 
 func main() {
@@ -36,7 +38,29 @@ func main() {
 		},
 		Update: func(mdl *model, msg app.Msg) app.UpdateResult[*model] {
 			switch msg := msg.(type) {
+			case app.FocusChangedMsg:
+				mdl.focused = msg.Key
+			case app.ClickMsg:
+				switch msg.Key {
+				case "confirm-yes":
+					mdl.counter++
+					mdl.modalOpen = false
+				case "confirm-no":
+					mdl.modalOpen = false
+				}
 			case app.KeyMsg:
+				if mdl.modalOpen {
+					switch msg.Key.Type {
+					case input.Enter:
+						if mdl.focused == "confirm-yes" {
+							mdl.counter++
+						}
+						mdl.modalOpen = false
+					case input.Escape:
+						mdl.modalOpen = false
+					}
+					return app.NoCmd(mdl)
+				}
 				switch msg.Key.Type {
 				case input.Up:
 					if mdl.selected > 0 {
@@ -47,7 +71,7 @@ func main() {
 						mdl.selected++
 					}
 				case input.Enter:
-					mdl.counter++
+					mdl.modalOpen = true
 				case input.RuneKey:
 					if msg.Key.Rune == 'q' {
 						return app.Quit(mdl)
@@ -76,7 +100,7 @@ func main() {
 			counter := node.Text(fmt.Sprintf(" Activations: %d ", mdl.counter))
 			help := node.TextStyled(" ↑/↓ navigate • Enter activate • q quit ", node.Color(8), 0, 0)
 
-			return node.Column(
+			main := node.Column(
 				title,
 				node.Text(""),
 				node.Box(node.BorderRounded, node.Column(items...)),
@@ -85,6 +109,38 @@ func main() {
 				node.Spacer(),
 				help,
 			)
+
+			if !mdl.modalOpen {
+				return main
+			}
+
+			// Confirm dialog: the focus scope traps Tab/click focus in
+			// the modal while it is shown; closing it restores focus.
+			button := func(key, label string) node.Node {
+				fg, bg := node.Color(7), node.Color(238)
+				if focused == key {
+					fg, bg = node.Color(0), node.Color(6)
+				}
+				return node.TextStyled(" "+label+" ", fg, bg, node.Bold).
+					WithKey(key).WithFocusable()
+			}
+			dialog := node.Box(node.BorderRounded, node.Column(
+				node.Text("Activate "+mdl.items[mdl.selected]+"?"),
+				node.Text(""),
+				node.Row(
+					node.Spacer(),
+					button("confirm-yes", "Yes"),
+					node.Text("  "),
+					button("confirm-no", "No"),
+					node.Spacer(),
+				),
+			).WithPaddingAll(1)).
+				WithSize(30, 7).
+				WithBG(node.Color(236)).
+				WithKey("confirm").
+				WithFocusScope()
+
+			return node.Overlay(main, node.Centered(dialog))
 		},
 	}
 

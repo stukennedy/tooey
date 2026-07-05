@@ -33,6 +33,14 @@ type FocusMsg struct {
 	Focused bool
 }
 
+// FocusChangedMsg reports that the focused node changed (Tab, click, or
+// a focus scope opening/closing). Key is the newly focused node's key,
+// "" if nothing is focused. Mirror it into your model when Update needs
+// to know what is focused (e.g. Enter activating the focused button).
+type FocusChangedMsg struct {
+	Key string
+}
+
 // PasteMsg carries text from a bracketed paste event.
 type PasteMsg struct {
 	Text string
@@ -145,6 +153,7 @@ func (a *App[M]) Run(ctx context.Context) error {
 
 	var prevBuf *cell.Buffer
 	var lastLayout *layout.LayoutNode
+	var lastFocused string
 
 	// toMsg translates a raw key event into an app message; nil means
 	// the event is consumed (e.g. mouse button release).
@@ -257,8 +266,6 @@ func (a *App[M]) Run(ctx context.Context) error {
 					fm.Next()
 				case input.ShiftTab:
 					fm.Prev()
-				case input.Escape:
-					fm.PopContext()
 				}
 			}
 		}
@@ -297,6 +304,14 @@ func (a *App[M]) Run(ctx context.Context) error {
 		fm.Update(lt)
 		lastLayout = &lt
 
+		// Tell Update when focus moved (Tab, click, or scope change) so
+		// models can mirror the focused key.
+		if cur := fm.Current(); cur != lastFocused {
+			lastFocused = cur
+			msgs = append(msgs, FocusChangedMsg{Key: cur})
+			needsRender = true
+		}
+
 		buf := cell.NewBuffer(width, height)
 		cell.Paint(buf, lt)
 
@@ -308,6 +323,8 @@ func (a *App[M]) Run(ctx context.Context) error {
 		ansi.Render(out, changes)
 
 		prevBuf = buf
-		needsRender = false
+		// Keep rendering pending if the frame itself queued messages
+		// (e.g. FocusChangedMsg) so they process on the next tick.
+		needsRender = len(msgs) > 0
 	}
 }

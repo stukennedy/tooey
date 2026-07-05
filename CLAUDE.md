@@ -43,7 +43,7 @@ Elm-style: UI is a pure function of state. No imperative widget mutation. The ap
 | `diff` | Cell-by-cell frame diff, groups adjacent changes into minimal runs |
 | `ansi` | ANSI escape sequence emitter (256/truecolor with downgrade), alt screen, cursor control |
 | `input` | Raw terminal key + mouse parsing (SGR coordinates), resize detection via SIGWINCH |
-| `focus` | Focus manager with Tab cycling, direct `Focus(key)`, push/pop context stack |
+| `focus` | Focus manager with Tab cycling, direct `Focus(key)`, declarative focus scopes (modal traps) |
 | `app` | Elm-style main loop, generic `App[M]` (Init/Update/View), async Cmd system, click hit-testing, 30fps |
 | `sse` | SSE client + HTTP POST for server integration |
 | `wire` | JSON serialization of node trees + actions for server-driven UIs |
@@ -56,7 +56,7 @@ Elm-style: UI is a pure function of state. No imperative widget mutation. The ap
 - Buffer is flat `[]Cell` (row-major) — cache-friendly, simple to diff; wide runes own a continuation cell (Rune 0)
 - Color is a uint32 scalar: 0 = default, 1–255 = palette, `Ansi(n)`/`RGB(r,g,b)` for explicit palette/truecolor
 - Layout produces a separate `LayoutNode` tree — keeps virtual tree immutable; also used for mouse hit-testing
-- Focus managed outside component tree — rebuilt each frame from layout tree; clicks focus via `HitTest`
+- Focus managed outside component tree — rebuilt each frame from layout tree; clicks focus via `HitTest`; `WithFocusScope` traps focus in a subtree (modals) with automatic save/restore, no imperative push/pop
 - Overlay = children stacked in the same rect, painted in order (no z-buffer needed)
 - SSE decoupled from render — just another Msg source, batched per frame
 - App/Update are generic over the model: `app.App[M]`, `app.NoCmd(model)`, `app.WithCmd(model, cmds...)`, `app.Quit(model)` to quit

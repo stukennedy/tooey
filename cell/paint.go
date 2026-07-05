@@ -24,8 +24,23 @@ func paintNode(buf *Buffer, ln layout.LayoutNode, clip layout.Rect) {
 		paintBox(buf, n, r, clip)
 	}
 
-	// Recurse into children, clipping to parent rect
-	childClip := intersect(r, clip)
+	// Recurse into children, clipping to the parent's content box
+	// (inside padding, and inside a Box border).
+	content := r
+	if n.Type == node.BoxNode && n.Props.Border != node.BorderNone {
+		content = layout.Rect{X: content.X + 1, Y: content.Y + 1, W: content.W - 2, H: content.H - 2}
+	}
+	content.X += n.Props.PadLeft
+	content.Y += n.Props.PadTop
+	content.W -= n.Props.PadLeft + n.Props.PadRight
+	content.H -= n.Props.PadTop + n.Props.PadBottom
+	if content.W < 0 {
+		content.W = 0
+	}
+	if content.H < 0 {
+		content.H = 0
+	}
+	childClip := intersect(content, clip)
 	for _, child := range ln.Children {
 		paintNode(buf, child, childClip)
 	}
@@ -46,13 +61,14 @@ func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 		}
 	}
 
-	lines := wrapText(n.Props.Text, r.W)
+	pt, pr, _, pl := n.Props.PadTop, n.Props.PadRight, n.Props.PadBottom, n.Props.PadLeft
+	lines := wrapText(n.Props.Text, r.W-pl-pr)
 	for row, line := range lines {
-		y := r.Y + row
+		y := r.Y + pt + row
 		if y < clip.Y || y >= clip.Y+clip.H {
 			continue
 		}
-		col := r.X
+		col := r.X + pl
 		for _, ch := range line {
 			w := textwidth.Rune(ch)
 			if w == 0 {

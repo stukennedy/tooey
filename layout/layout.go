@@ -52,8 +52,9 @@ func layout(n node.Node, avail Rect) LayoutNode {
 }
 
 func layoutText(n node.Node, avail Rect) LayoutNode {
-	lines := wrapText(n.Props.Text, avail.W)
-	h := len(lines)
+	pt, pr, pb, pl := padding(n)
+	lines := wrapText(n.Props.Text, avail.W-pl-pr)
+	h := len(lines) + pt + pb
 	if h > avail.H {
 		h = avail.H
 	}
@@ -69,6 +70,7 @@ func layoutRow(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
+	inner := insetPadding(avail, n)
 
 	// First pass: measure non-flex children
 	totalFixed := 0
@@ -78,32 +80,32 @@ func layoutRow(n node.Node, avail Rect) LayoutNode {
 		if fw > 0 {
 			totalFlex += fw
 		} else {
-			totalFixed += measureWidth(child, avail)
+			totalFixed += measureWidth(child, inner)
 		}
 	}
 
-	remaining := avail.W - totalFixed
+	remaining := inner.W - totalFixed
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Second pass: assign positions
-	x := avail.X
+	x := inner.X
 	for _, child := range n.Children {
 		fw := flexWeight(child)
 		var childW int
 		if fw > 0 && totalFlex > 0 {
 			childW = (remaining * fw) / totalFlex
 		} else {
-			childW = measureWidth(child, avail)
+			childW = measureWidth(child, inner)
 		}
-		if childW > avail.W-(x-avail.X) {
-			childW = avail.W - (x - avail.X)
+		if childW > inner.W-(x-inner.X) {
+			childW = inner.W - (x - inner.X)
 		}
 		if childW < 0 {
 			childW = 0
 		}
-		childRect := Rect{x, avail.Y, childW, avail.H}
+		childRect := Rect{x, inner.Y, childW, inner.H}
 		ln.Children = append(ln.Children, layout(child, childRect))
 		x += childW
 	}
@@ -116,6 +118,7 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
+	inner := insetPadding(avail, n)
 
 	scrollable := n.Props.ScrollOffset > 0 || n.Props.ScrollToBottom
 
@@ -127,34 +130,34 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 		if fw > 0 {
 			totalFlex += fw
 		} else {
-			totalFixed += measureHeight(child, avail)
+			totalFixed += measureHeight(child, inner)
 		}
 	}
 
-	remaining := avail.H - totalFixed
+	remaining := inner.H - totalFixed
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Second pass: assign positions
-	y := avail.Y
+	y := inner.Y
 	for _, child := range n.Children {
 		fw := flexWeight(child)
 		var childH int
 		if fw > 0 && totalFlex > 0 {
 			childH = (remaining * fw) / totalFlex
 		} else {
-			childH = measureHeight(child, avail)
+			childH = measureHeight(child, inner)
 		}
 		if !scrollable {
-			if childH > avail.H-(y-avail.Y) {
-				childH = avail.H - (y - avail.Y)
+			if childH > inner.H-(y-inner.Y) {
+				childH = inner.H - (y - inner.Y)
 			}
 			if childH < 0 {
 				childH = 0
 			}
 		}
-		childRect := Rect{avail.X, y, avail.W, childH}
+		childRect := Rect{inner.X, y, inner.W, childH}
 		ln.Children = append(ln.Children, layout(child, childRect))
 		y += childH
 	}
@@ -162,9 +165,9 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 	// Apply scroll offset: shift children upward
 	scrollOffset := n.Props.ScrollOffset
 	if n.Props.ScrollToBottom {
-		totalContentH := y - avail.Y
-		if totalContentH > avail.H {
-			autoOffset := totalContentH - avail.H
+		totalContentH := y - inner.Y
+		if totalContentH > inner.H {
+			autoOffset := totalContentH - inner.H
 			// Manual scroll (scrollOffset) adjusts from the auto-scroll position
 			scrollOffset = autoOffset - n.Props.ScrollOffset
 			if scrollOffset < 0 {
@@ -188,12 +191,13 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
-	// Border takes 1 cell on each side
+	// Border takes 1 cell on each side; padding applies inside the border.
+	pt, pr, pb, pl := padding(n)
 	innerRect := Rect{
-		X: avail.X + 1,
-		Y: avail.Y + 1,
-		W: avail.W - 2,
-		H: avail.H - 2,
+		X: avail.X + 1 + pl,
+		Y: avail.Y + 1 + pt,
+		W: avail.W - 2 - pl - pr,
+		H: avail.H - 2 - pt - pb,
 	}
 	if innerRect.W < 0 {
 		innerRect.W = 0
@@ -205,25 +209,44 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	return ln
 }
 
+// padding returns a node's padding as (top, right, bottom, left).
+func padding(n node.Node) (int, int, int, int) {
+	return n.Props.PadTop, n.Props.PadRight, n.Props.PadBottom, n.Props.PadLeft
+}
+
+// insetPadding shrinks a rect by the node's padding, clamping at zero size.
+func insetPadding(r Rect, n node.Node) Rect {
+	pt, pr, pb, pl := padding(n)
+	r = Rect{X: r.X + pl, Y: r.Y + pt, W: r.W - pl - pr, H: r.H - pt - pb}
+	if r.W < 0 {
+		r.W = 0
+	}
+	if r.H < 0 {
+		r.H = 0
+	}
+	return r
+}
+
 // measureWidth returns the intrinsic width of a non-flex node.
 func measureWidth(n node.Node, avail Rect) int {
 	if n.Props.Width > 0 {
 		return n.Props.Width
 	}
+	_, pr, _, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		return textwidth.String(n.Props.Text)
+		return textwidth.String(n.Props.Text) + pl + pr
 	case node.BoxNode:
 		if len(n.Children) > 0 {
-			return measureWidth(n.Children[0], avail) + 2
+			return measureWidth(n.Children[0], avail) + 2 + pl + pr
 		}
-		return 2
+		return 2 + pl + pr
 	case node.RowNode:
 		w := 0
 		for _, c := range n.Children {
 			w += measureWidth(c, avail)
 		}
-		return w
+		return w + pl + pr
 	default:
 		return avail.W
 	}
@@ -234,25 +257,26 @@ func measureHeight(n node.Node, avail Rect) int {
 	if n.Props.Height > 0 {
 		return n.Props.Height
 	}
+	pt, pr, pb, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		lines := wrapText(n.Props.Text, avail.W)
-		return len(lines)
+		lines := wrapText(n.Props.Text, avail.W-pl-pr)
+		return len(lines) + pt + pb
 	case node.BoxNode:
 		if len(n.Children) > 0 {
-			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - 2, H: avail.H}
+			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - 2 - pl - pr, H: avail.H}
 			if innerAvail.W < 0 {
 				innerAvail.W = 0
 			}
-			return measureHeight(n.Children[0], innerAvail) + 2
+			return measureHeight(n.Children[0], innerAvail) + 2 + pt + pb
 		}
-		return 2
+		return 2 + pt + pb
 	case node.ColumnNode, node.ListNode, node.PaneNode:
 		h := 0
 		for _, c := range n.Children {
 			h += measureHeight(c, avail)
 		}
-		return h
+		return h + pt + pb
 	case node.RowNode:
 		h := 1
 		for _, c := range n.Children {
@@ -261,7 +285,7 @@ func measureHeight(n node.Node, avail Rect) int {
 				h = ch
 			}
 		}
-		return h
+		return h + pt + pb
 	default:
 		return 1
 	}

@@ -130,6 +130,9 @@ type Props struct {
 	Style        StyleFlags
 	ScrollOffset   int  // vertical scroll offset for Column/List/Pane
 	ScrollToBottom bool // auto-scroll so bottom content is visible
+
+	// Padding insets content from the node's rect (inside a Box border).
+	PadTop, PadRight, PadBottom, PadLeft int
 }
 
 // Node represents a virtual UI element in the component tree.
@@ -209,6 +212,22 @@ func (n Node) WithScrollToBottom() Node {
 	return n
 }
 
+// WithPadding sets per-side padding (top, right, bottom, left) and
+// returns the node. Padding insets content from the node's rect; for a
+// Box it applies inside the border.
+func (n Node) WithPadding(top, right, bottom, left int) Node {
+	n.Props.PadTop = top
+	n.Props.PadRight = right
+	n.Props.PadBottom = bottom
+	n.Props.PadLeft = left
+	return n
+}
+
+// WithPaddingAll sets the same padding on all four sides.
+func (n Node) WithPaddingAll(p int) Node {
+	return n.WithPadding(p, p, p, p)
+}
+
 // Bar creates a full-width text node with background color fill.
 // Use in a Row; the FlexWeight=1 causes it to stretch to fill available width.
 func Bar(text string, fg, bg Color, style StyleFlags) Node {
@@ -238,27 +257,7 @@ func Indent(spaces int, child Node) Node {
 
 // Pad wraps a child node with padding on all sides.
 func Pad(top, right, bottom, left int, child Node) Node {
-	padded := child
-	if left > 0 || right > 0 {
-		var row []Node
-		if left > 0 {
-			row = append(row, Text(strings.Repeat(" ", left)))
-		}
-		row = append(row, padded)
-		if right > 0 {
-			row = append(row, Text(strings.Repeat(" ", right)))
-		}
-		padded = Row(row...)
-	}
-	var col []Node
-	for i := 0; i < top; i++ {
-		col = append(col, Text(""))
-	}
-	col = append(col, padded)
-	for i := 0; i < bottom; i++ {
-		col = append(col, Text(""))
-	}
-	return Column(col...)
+	return Column(child).WithPadding(top, right, bottom, left)
 }
 
 // ParagraphOpts configures Paragraph rendering.

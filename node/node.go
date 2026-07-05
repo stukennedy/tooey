@@ -15,8 +15,81 @@ const (
 	SpacerNode
 )
 
-// Color represents an ANSI 256-color value. 0 means default/unset.
-type Color uint8
+// Color represents a terminal color. The zero value is the terminal default.
+//
+// Encoding (uint32):
+//   - 0: terminal default (unset)
+//   - 0x000000NN (NN in 1..255): ANSI 256-palette index, so plain literals
+//     like Color(245) keep working
+//   - ModeAnsi | NN: explicit ANSI 256-palette index — use Ansi(0) for
+//     palette black, which the plain form cannot express
+//   - ModeRGB | 0xRRGGBB: 24-bit truecolor
+type Color uint32
+
+const (
+	// ModeRGB marks a Color as 24-bit RGB (low 24 bits are 0xRRGGBB).
+	ModeRGB Color = 0x01000000
+	// ModeAnsi marks a Color as an explicit ANSI-256 index (low 8 bits).
+	ModeAnsi Color = 0x02000000
+
+	colorModeMask Color = 0xFF000000
+)
+
+// RGB returns a 24-bit truecolor Color.
+func RGB(r, g, b uint8) Color {
+	return ModeRGB | Color(r)<<16 | Color(g)<<8 | Color(b)
+}
+
+// Ansi returns an explicit ANSI 256-palette Color. Unlike a plain
+// Color(n) literal, Ansi(0) means palette black rather than default.
+func Ansi(n uint8) Color {
+	return ModeAnsi | Color(n)
+}
+
+// IsDefault reports whether the color is the terminal default.
+func (c Color) IsDefault() bool { return c == 0 }
+
+// IsRGB reports whether the color is a 24-bit RGB color.
+func (c Color) IsRGB() bool { return c&colorModeMask == ModeRGB }
+
+// RGBValues returns the red, green, blue components of an RGB color.
+func (c Color) RGBValues() (r, g, b uint8) {
+	return uint8(c >> 16), uint8(c >> 8), uint8(c)
+}
+
+// Ansi256 returns the ANSI 256-palette index for palette colors.
+// For RGB colors it returns the nearest palette approximation.
+func (c Color) Ansi256() uint8 {
+	if c.IsRGB() {
+		r, g, b := c.RGBValues()
+		return rgbToAnsi256(r, g, b)
+	}
+	return uint8(c)
+}
+
+// rgbToAnsi256 maps 24-bit RGB to the nearest xterm-256 palette entry
+// (6x6x6 color cube at 16..231, grayscale ramp at 232..255).
+func rgbToAnsi256(r, g, b uint8) uint8 {
+	if r == g && g == b {
+		if r < 8 {
+			return 16
+		}
+		if r > 248 {
+			return 231
+		}
+		return uint8(232 + (int(r)-8)*24/247)
+	}
+	cube := func(v uint8) int {
+		if v < 48 {
+			return 0
+		}
+		if v < 114 {
+			return 1
+		}
+		return int(v-35) / 40
+	}
+	return uint8(16 + 36*cube(r) + 6*cube(g) + cube(b))
+}
 
 // StyleFlags are bitwise text style attributes.
 type StyleFlags uint8

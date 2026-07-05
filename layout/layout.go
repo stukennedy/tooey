@@ -1,10 +1,8 @@
 package layout
 
 import (
-	"strings"
-	"unicode/utf8"
-
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 // Rect is a positioned rectangle in terminal coordinates.
@@ -17,6 +15,27 @@ type LayoutNode struct {
 	Node     node.Node
 	Rect     Rect
 	Children []LayoutNode
+
+	// Lines holds the wrapped text lines for TextNodes, computed once
+	// during layout so paint doesn't re-wrap.
+	Lines []string
+}
+
+// textLines returns the render lines for a text node at the given
+// content width, honoring NoWrap.
+func textLines(n node.Node, width int) []string {
+	if n.Props.NoWrap {
+		return textwidth.SplitLines(n.Props.Text)
+	}
+	return textwidth.Wrap(n.Props.Text, width)
+}
+
+// borderInset returns 1 when the node draws a border, else 0.
+func borderInset(n node.Node) int {
+	if n.Props.Border != node.BorderNone {
+		return 1
+	}
+	return 0
 }
 
 // Layout computes positions for the node tree within the given terminal size.
@@ -36,6 +55,8 @@ func layout(n node.Node, avail Rect) LayoutNode {
 		ln = layoutColumn(n, avail)
 	case node.BoxNode:
 		ln = layoutBox(n, avail)
+	case node.OverlayNode:
+		ln = layoutOverlay(n, avail)
 	case node.SpacerNode:
 		ln.Rect = avail
 	}
@@ -52,15 +73,23 @@ func layout(n node.Node, avail Rect) LayoutNode {
 }
 
 func layoutText(n node.Node, avail Rect) LayoutNode {
-	lines := wrapText(n.Props.Text, avail.W)
-	h := len(lines)
+	pt, pr, pb, pl := padding(n)
+	// An explicit Width narrower than the available space constrains
+	// wrapping, not just the final rect.
+	w := avail.W
+	if n.Props.Width > 0 && n.Props.Width < w {
+		w = n.Props.Width
+	}
+	lines := textLines(n, w-pl-pr)
+	h := len(lines) + pt + pb
 	if h > avail.H {
 		h = avail.H
 	}
 	// Text uses the full available width (important for flex-allocated space)
 	return LayoutNode{
-		Node: n,
-		Rect: Rect{avail.X, avail.Y, avail.W, h},
+		Node:  n,
+		Rect:  Rect{avail.X, avail.Y, avail.W, h},
+		Lines: lines,
 	}
 }
 
@@ -69,6 +98,7 @@ func layoutRow(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
+	inner := insetPadding(avail, n)
 
 	// First pass: measure non-flex children
 	totalFixed := 0
@@ -78,32 +108,32 @@ func layoutRow(n node.Node, avail Rect) LayoutNode {
 		if fw > 0 {
 			totalFlex += fw
 		} else {
-			totalFixed += measureWidth(child, avail)
+			totalFixed += measureWidth(child, inner)
 		}
 	}
 
-	remaining := avail.W - totalFixed
+	remaining := inner.W - totalFixed
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Second pass: assign positions
-	x := avail.X
+	x := inner.X
 	for _, child := range n.Children {
 		fw := flexWeight(child)
 		var childW int
 		if fw > 0 && totalFlex > 0 {
 			childW = (remaining * fw) / totalFlex
 		} else {
-			childW = measureWidth(child, avail)
+			childW = measureWidth(child, inner)
 		}
-		if childW > avail.W-(x-avail.X) {
-			childW = avail.W - (x - avail.X)
+		if childW > inner.W-(x-inner.X) {
+			childW = inner.W - (x - inner.X)
 		}
 		if childW < 0 {
 			childW = 0
 		}
-		childRect := Rect{x, avail.Y, childW, avail.H}
+		childRect := Rect{x, inner.Y, childW, inner.H}
 		ln.Children = append(ln.Children, layout(child, childRect))
 		x += childW
 	}
@@ -116,6 +146,7 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
+	inner := insetPadding(avail, n)
 
 	scrollable := n.Props.ScrollOffset > 0 || n.Props.ScrollToBottom
 
@@ -127,34 +158,34 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 		if fw > 0 {
 			totalFlex += fw
 		} else {
-			totalFixed += measureHeight(child, avail)
+			totalFixed += measureHeight(child, inner)
 		}
 	}
 
-	remaining := avail.H - totalFixed
+	remaining := inner.H - totalFixed
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Second pass: assign positions
-	y := avail.Y
+	y := inner.Y
 	for _, child := range n.Children {
 		fw := flexWeight(child)
 		var childH int
 		if fw > 0 && totalFlex > 0 {
 			childH = (remaining * fw) / totalFlex
 		} else {
-			childH = measureHeight(child, avail)
+			childH = measureHeight(child, inner)
 		}
 		if !scrollable {
-			if childH > avail.H-(y-avail.Y) {
-				childH = avail.H - (y - avail.Y)
+			if childH > inner.H-(y-inner.Y) {
+				childH = inner.H - (y - inner.Y)
 			}
 			if childH < 0 {
 				childH = 0
 			}
 		}
-		childRect := Rect{avail.X, y, avail.W, childH}
+		childRect := Rect{inner.X, y, inner.W, childH}
 		ln.Children = append(ln.Children, layout(child, childRect))
 		y += childH
 	}
@@ -162,9 +193,9 @@ func layoutColumn(n node.Node, avail Rect) LayoutNode {
 	// Apply scroll offset: shift children upward
 	scrollOffset := n.Props.ScrollOffset
 	if n.Props.ScrollToBottom {
-		totalContentH := y - avail.Y
-		if totalContentH > avail.H {
-			autoOffset := totalContentH - avail.H
+		totalContentH := y - inner.Y
+		if totalContentH > inner.H {
+			autoOffset := totalContentH - inner.H
 			// Manual scroll (scrollOffset) adjusts from the auto-scroll position
 			scrollOffset = autoOffset - n.Props.ScrollOffset
 			if scrollOffset < 0 {
@@ -188,12 +219,14 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
-	// Border takes 1 cell on each side
+	// A drawn border takes 1 cell on each side; padding applies inside it.
+	b := borderInset(n)
+	pt, pr, pb, pl := padding(n)
 	innerRect := Rect{
-		X: avail.X + 1,
-		Y: avail.Y + 1,
-		W: avail.W - 2,
-		H: avail.H - 2,
+		X: avail.X + b + pl,
+		Y: avail.Y + b + pt,
+		W: avail.W - 2*b - pl - pr,
+		H: avail.H - 2*b - pt - pb,
 	}
 	if innerRect.W < 0 {
 		innerRect.W = 0
@@ -205,25 +238,74 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	return ln
 }
 
+// layoutOverlay stacks every child in the full available rect. Children
+// are painted in order, so later children appear on top.
+func layoutOverlay(n node.Node, avail Rect) LayoutNode {
+	ln := LayoutNode{Node: n, Rect: avail}
+	inner := insetPadding(avail, n)
+	for _, child := range n.Children {
+		ln.Children = append(ln.Children, layout(child, inner))
+	}
+	return ln
+}
+
+// padding returns a node's padding as (top, right, bottom, left).
+func padding(n node.Node) (int, int, int, int) {
+	return n.Props.PadTop, n.Props.PadRight, n.Props.PadBottom, n.Props.PadLeft
+}
+
+// insetPadding shrinks a rect by the node's padding, clamping at zero size.
+func insetPadding(r Rect, n node.Node) Rect {
+	pt, pr, pb, pl := padding(n)
+	r = Rect{X: r.X + pl, Y: r.Y + pt, W: r.W - pl - pr, H: r.H - pt - pb}
+	if r.W < 0 {
+		r.W = 0
+	}
+	if r.H < 0 {
+		r.H = 0
+	}
+	return r
+}
+
 // measureWidth returns the intrinsic width of a non-flex node.
 func measureWidth(n node.Node, avail Rect) int {
 	if n.Props.Width > 0 {
 		return n.Props.Width
 	}
+	_, pr, _, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		return utf8.RuneCountInString(n.Props.Text)
-	case node.BoxNode:
-		if len(n.Children) > 0 {
-			return measureWidth(n.Children[0], avail) + 2
+		w := 0
+		for _, l := range textwidth.SplitLines(n.Props.Text) {
+			if lw := textwidth.String(l); lw > w {
+				w = lw
+			}
 		}
-		return 2
+		return w + pl + pr
+	case node.BoxNode:
+		b := 2 * borderInset(n)
+		if len(n.Children) > 0 {
+			return measureWidth(n.Children[0], avail) + b + pl + pr
+		}
+		return b + pl + pr
 	case node.RowNode:
 		w := 0
 		for _, c := range n.Children {
 			w += measureWidth(c, avail)
 		}
-		return w
+		return w + pl + pr
+	case node.OverlayNode:
+		// Wide enough for the widest layer.
+		w := 0
+		for _, c := range n.Children {
+			if cw := measureWidth(c, avail); cw > w {
+				w = cw
+			}
+		}
+		if w == 0 {
+			return avail.W
+		}
+		return w + pl + pr
 	default:
 		return avail.W
 	}
@@ -234,25 +316,31 @@ func measureHeight(n node.Node, avail Rect) int {
 	if n.Props.Height > 0 {
 		return n.Props.Height
 	}
+	pt, pr, pb, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		lines := wrapText(n.Props.Text, avail.W)
-		return len(lines)
+		w := avail.W
+		if n.Props.Width > 0 && n.Props.Width < w {
+			w = n.Props.Width
+		}
+		lines := textLines(n, w-pl-pr)
+		return len(lines) + pt + pb
 	case node.BoxNode:
+		b := 2 * borderInset(n)
 		if len(n.Children) > 0 {
-			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - 2, H: avail.H}
+			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - b - pl - pr, H: avail.H}
 			if innerAvail.W < 0 {
 				innerAvail.W = 0
 			}
-			return measureHeight(n.Children[0], innerAvail) + 2
+			return measureHeight(n.Children[0], innerAvail) + b + pt + pb
 		}
-		return 2
+		return b + pt + pb
 	case node.ColumnNode, node.ListNode, node.PaneNode:
 		h := 0
 		for _, c := range n.Children {
 			h += measureHeight(c, avail)
 		}
-		return h
+		return h + pt + pb
 	case node.RowNode:
 		h := 1
 		for _, c := range n.Children {
@@ -261,7 +349,19 @@ func measureHeight(n node.Node, avail Rect) int {
 				h = ch
 			}
 		}
-		return h
+		return h + pt + pb
+	case node.OverlayNode:
+		// Tall enough for the tallest layer.
+		h := 0
+		for _, c := range n.Children {
+			if ch := measureHeight(c, avail); ch > h {
+				h = ch
+			}
+		}
+		if h == 0 {
+			return 1
+		}
+		return h + pt + pb
 	default:
 		return 1
 	}
@@ -277,45 +377,4 @@ func shiftY(ln *LayoutNode, dy int) {
 
 func flexWeight(n node.Node) int {
 	return n.Props.FlexWeight
-}
-
-// wrapText wraps text to fit within maxWidth columns.
-func wrapText(s string, maxWidth int) []string {
-	if maxWidth <= 0 {
-		return nil
-	}
-	if s == "" {
-		return []string{""}
-	}
-
-	var lines []string
-	for _, paragraph := range strings.Split(s, "\n") {
-		trimmed := strings.TrimLeft(paragraph, " \t")
-		leading := paragraph[:len(paragraph)-len(trimmed)]
-
-		if trimmed == "" {
-			lines = append(lines, leading)
-			continue
-		}
-		words := strings.Fields(trimmed)
-		if len(words) == 0 {
-			lines = append(lines, leading)
-			continue
-		}
-		line := leading + words[0]
-		lineLen := utf8.RuneCountInString(line)
-		for _, w := range words[1:] {
-			wLen := utf8.RuneCountInString(w)
-			if lineLen+1+wLen <= maxWidth {
-				line += " " + w
-				lineLen += 1 + wLen
-			} else {
-				lines = append(lines, line)
-				line = leading + w
-				lineLen = utf8.RuneCountInString(leading) + wLen
-			}
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }

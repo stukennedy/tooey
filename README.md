@@ -2,6 +2,8 @@
 
 A terminal UI runtime for Go, inspired by React and Elm.
 
+![tooey list demo — selection list with a modal confirm dialog and focus trapping](demos/list/demo.gif)
+
 Build full-screen terminal applications by composing declarative node trees. Tooey handles layout, diffing, and rendering — you just describe what the screen should look like.
 
 ```
@@ -47,15 +49,14 @@ func main() {
     oldState, _ := term.MakeRaw(int(os.Stdin.Fd()))
     defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-    a := &app.App{
-        Init: func() interface{} {
+    a := &app.App[*model]{
+        Init: func() *model {
             return &model{
                 items:    []string{"Alpha", "Beta", "Gamma"},
                 selected: 0,
             }
         },
-        Update: func(m interface{}, msg app.Msg) app.UpdateResult {
-            mdl := m.(*model)
+        Update: func(mdl *model, msg app.Msg) app.UpdateResult[*model] {
             if km, ok := msg.(app.KeyMsg); ok {
                 switch km.Key.Type {
                 case input.Up:
@@ -63,13 +64,12 @@ func main() {
                 case input.Down:
                     if mdl.selected < len(mdl.items)-1 { mdl.selected++ }
                 case input.RuneKey:
-                    if km.Key.Rune == 'q' { return app.UpdateResult{Model: nil} }
+                    if km.Key.Rune == 'q' { return app.Quit(mdl) }
                 }
             }
             return app.NoCmd(mdl)
         },
-        View: func(m interface{}, focused string) node.Node {
-            mdl := m.(*model)
+        View: func(mdl *model, focused string) node.Node {
             items := make([]node.Node, len(mdl.items))
             for i, item := range mdl.items {
                 if i == mdl.selected {
@@ -104,14 +104,29 @@ node.Column(top, middle, bottom)                       // vertical layout
 node.Box(node.BorderRounded, child)                    // bordered container
 node.Spacer()                                          // flex filler
 
+node.Overlay(base, modal)                              // layered stack (modals, popups)
+node.Centered(child)                                   // center a child at intrinsic size
+
 // Chaining modifiers
 node.Column(items...).WithFlex(1).WithScrollToBottom()
 node.Text("ok").WithKey("btn").WithFocusable()
+node.Column(items...).WithPadding(1, 2, 1, 2)          // top, right, bottom, left
+node.Text("pre-aligned  columns").WithNoWrap()         // clip at edge, never re-wrap
+node.Box(node.BorderRounded, body).WithBG(node.RGB(20, 20, 40))
 ```
 
 **Styles:** `Bold`, `Dim`, `Italic`, `Underline`, `Reverse`
 **Borders:** `BorderNone`, `BorderSingle`, `BorderDouble`, `BorderRounded`
-**Colors:** ANSI 256 palette (`node.Color(0)` through `node.Color(255)`, `0` = default)
+**Colors:**
+- ANSI 256 palette: `node.Color(1)` through `node.Color(255)` (`0` = terminal default)
+- Explicit palette black: `node.Ansi(0)`
+- 24-bit truecolor: `node.RGB(255, 128, 0)` — emitted as truecolor when the
+  terminal supports it (`COLORTERM`), otherwise downgraded to the nearest
+  palette entry (`ansi.SetTrueColor` overrides detection)
+
+Text is measured by **display width**, so CJK characters and emoji (two cells
+wide) lay out and diff correctly. The `textwidth` package exposes the
+measurement helpers.
 
 ## Async commands
 
@@ -137,7 +152,7 @@ func update(m interface{}, msg app.Msg) app.UpdateResult {
 }
 ```
 
-Return `app.UpdateResult{Model: nil}` to quit.
+Return `app.Quit(model)` to quit.
 
 ## Built-in messages
 
@@ -146,7 +161,15 @@ Return `app.UpdateResult{Model: nil}` to quit.
 | `app.KeyMsg` | Keyboard input (wraps `input.Key`) |
 | `app.ResizeMsg` | Terminal resize (SIGWINCH) |
 | `app.FocusMsg` | Terminal focus gained/lost |
-| `app.ScrollMsg` | Mouse scroll wheel |
+| `app.ScrollMsg` | Mouse scroll wheel (with cursor position) |
+| `app.ClickMsg` | Mouse click — carries `X`, `Y`, and the `Key` of the node under the cursor |
+| `app.FocusChangedMsg` | Focused node changed (Tab, click, or focus scope open/close) — carries the new `Key` |
+| `app.DismissMsg` | Escape pressed while a focus scope was active — carries the scope's key; close the modal in Update |
+| `app.PasteMsg` | Bracketed paste |
+
+Clicks are hit-tested against the rendered layout: clicking a focusable
+keyed node focuses it automatically, and `ClickMsg.Key` tells Update which
+node was clicked.
 
 ## Components
 
@@ -154,18 +177,44 @@ The `component` package provides stateful, reusable building blocks:
 
 - **`TextInput`** — Multi-line text input with cursor navigation, word wrap, Home/End/Up/Down support. Call `.Update(key)` in your Update function, `.Render(prefix, fg, bg)` in View.
 - **`List`** — Vertical selection list with highlight styling.
+- **`Table`** — Column-aligned rows (display-width aware) with header and selection highlight.
+- **`Tabs`** — Clickable horizontal tab bar.
+- **`Select`** — Dropdown with keyed, clickable options.
+- **`Progress`** — Progress bar.
+- **`Badge`**, **`Spinner`**, **`Steps`**, **`Collapsible`** — status and structure helpers.
 - **`TextBlock`** — Styled text span with optional key.
 - **`Box`** — Bordered container with title.
 
+## Overlays and modals
+
+`node.Overlay` stacks layers in the same rect — the first child is the base
+UI, later children paint on top. Give a modal box a background so it
+occludes what's beneath it:
+
+```go
+modal := node.Box(node.BorderRounded, content).WithSize(40, 9).WithBG(node.Color(236))
+return node.Overlay(mainUI, node.Centered(modal))
+```
+
 ## Focus management
 
-Tooey manages focus automatically. Mark nodes as focusable, give them a key, and the framework handles Tab/Shift-Tab cycling and Escape to pop context:
+Tooey manages focus automatically. Mark nodes as focusable, give them a key, and the framework handles Tab/Shift-Tab cycling and click-to-focus:
 
 ```go
 node.Text("clickable").WithKey("btn-1").WithFocusable()
 ```
 
-The `focused` string passed to your View function is the key of the currently focused node.
+The `focused` string passed to your View function is the key of the currently focused node. When Update needs to know it too (e.g. Enter should activate the focused button), mirror `app.FocusChangedMsg` into your model.
+
+**Focus scopes** trap focus declaratively — mark a subtree (typically a modal overlay layer) and, while it renders, Tab and clicks only reach focusables inside it. Opening the scope saves the current focus; removing it from the view restores it. Nested scopes stack:
+
+```go
+dialog := node.Box(node.BorderRounded, buttons).
+    WithKey("confirm").WithFocusScope()
+return node.Overlay(mainUI, node.Centered(dialog))
+```
+
+While a scope is active, Escape arrives as `app.DismissMsg{Scope}` instead of a raw key — handle it by closing the modal. No imperative push/pop — like everything else, the active focus scope is a pure function of the view. See `demos/list` for a working confirm dialog.
 
 ## Scrolling
 
@@ -192,6 +241,39 @@ ch, _ := client.Connect(ctx)
 sse.PostAction("http://localhost:8080/action", "submit", payload)
 ```
 
+The `wire` package defines a language-neutral JSON format for node trees
+and actions, so the server can be written in anything:
+
+```go
+// Server side (or any language emitting the same JSON)
+data, _ := wire.Marshal(node.Column(node.Text("hello from the server")))
+
+// Client side: decode and hand to your View
+root, _ := wire.Unmarshal(data)
+```
+
+```json
+{"type":"column","children":[{"type":"text","props":{"text":"hello from the server"}}]}
+```
+
+Colors travel as palette integers or `"#RRGGBB"` strings, styles as
+`["bold","underline"]`, and `wire.Action{Name, Key, Value}` reports clicks
+and submissions back.
+
+## Testing your UI
+
+The `tooeytest` package renders a node tree at a fixed size and gives you
+the frame as text:
+
+```go
+func TestView(t *testing.T) {
+    tooeytest.AssertFrame(t, view(model), 20, 4, `
+        ┌────┐
+        │hi  │
+        └────┘`)
+}
+```
+
 ## Render pipeline internals
 
 Each frame passes through five stages:
@@ -207,9 +289,13 @@ The buffer is `width × height` cells. Each `Cell` holds a rune, foreground colo
 ## Demos
 
 ```bash
-go run ./demos/list      # Interactive list with selection and activation counter
+go run ./demos/list      # Interactive list with selection, modal confirm, and focus trapping
 go run ./demos/maude     # Chat TUI with tool blocks, markdown rendering, and diff highlighting
 ```
+
+![tooey maude demo — chat TUI with tool blocks and markdown](demos/maude/demo.gif)
+
+The GIFs are recorded with [vhs](https://github.com/charmbracelet/vhs) from the `demo.tape` scripts next to each demo.
 
 ## Requirements
 

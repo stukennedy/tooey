@@ -36,23 +36,28 @@ Elm-style: UI is a pure function of state. No imperative widget mutation. The ap
 
 | Package | Purpose |
 |---------|---------|
-| `node` | Node tree types (Text, Box, Row, Column, List, Pane, Spacer), builder funcs |
-| `cell` | Cell buffer (`[]Cell` with Rune/FG/BG/Style), `Paint()` renders layout to buffer |
-| `layout` | Single-pass flex layout engine (measure + place), scroll offset support |
+| `node` | Node tree types (Text, Box, Row, Column, List, Pane, Spacer, Overlay), builder funcs, Color model (default/ANSI-256/RGB) |
+| `textwidth` | Display-width measurement (wcwidth-style): CJK/emoji = 2 cells, combining marks = 0 |
+| `cell` | Cell buffer (`[]Cell` with Rune/FG/BG/Style), wide-rune invariants, `Paint()` renders layout to buffer |
+| `layout` | Single-pass flex layout engine (measure + place), padding, scroll offset, `HitTest` for mouse |
 | `diff` | Cell-by-cell frame diff, groups adjacent changes into minimal runs |
-| `ansi` | ANSI escape sequence emitter, alt screen, cursor control |
-| `input` | Raw terminal key parsing, resize detection via SIGWINCH |
-| `focus` | Focus manager with Tab cycling and push/pop context stack |
-| `app` | Elm-style main loop (Init/Update/View), async Cmd system, 30fps |
+| `ansi` | ANSI escape sequence emitter (256/truecolor with downgrade), alt screen, cursor control |
+| `input` | Raw terminal key + mouse parsing (SGR coordinates), resize detection via SIGWINCH |
+| `focus` | Focus manager with Tab cycling, direct `Focus(key)`, declarative focus scopes (modal traps) |
+| `app` | Elm-style main loop, generic `App[M]` (Init/Update/View), async Cmd system, click hit-testing, 30fps |
 | `sse` | SSE client + HTTP POST for server integration |
-| `component` | Reusable components: TextInput, List, TextBlock, Box |
+| `wire` | JSON serialization of node trees + actions for server-driven UIs |
+| `component` | Reusable components: TextInput, List, Table, Tabs, Select, Progress, Badge, Spinner, Steps, Collapsible |
+| `tooeytest` | Golden-frame test helpers (`RenderText`, `AssertFrame`) |
 
 ## Key Decisions
 
-- Node is a value struct, not an interface — builder funcs with chaining (`.WithKey()`, `.WithFlex()`, etc.)
-- Buffer is flat `[]Cell` (row-major) — cache-friendly, simple to diff
-- Layout produces a separate `LayoutNode` tree — keeps virtual tree immutable
-- Focus managed outside component tree — rebuilt each frame from layout tree
+- Node is a value struct, not an interface — builder funcs with chaining (`.WithKey()`, `.WithFlex()`, `.WithPadding()`, etc.)
+- Buffer is flat `[]Cell` (row-major) — cache-friendly, simple to diff; wide runes own a continuation cell (Rune 0)
+- Color is a uint32 scalar: 0 = default, 1–255 = palette, `Ansi(n)`/`RGB(r,g,b)` for explicit palette/truecolor
+- Layout produces a separate `LayoutNode` tree — keeps virtual tree immutable; also used for mouse hit-testing
+- Focus managed outside component tree — rebuilt each frame from layout tree; clicks focus via `HitTest`; `WithFocusScope` traps focus in a subtree (modals) with automatic save/restore, no imperative push/pop
+- Overlay = children stacked in the same rect, painted in order (no z-buffer needed)
 - SSE decoupled from render — just another Msg source, batched per frame
-- Update returns `app.NoCmd(model)` or `app.WithCmd(model, cmds...)` — return nil Model to quit
+- App/Update are generic over the model: `app.App[M]`, `app.NoCmd(model)`, `app.WithCmd(model, cmds...)`, `app.Quit(model)` to quit
 - Only external dependency: `golang.org/x/term`

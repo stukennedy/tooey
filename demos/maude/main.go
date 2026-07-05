@@ -11,6 +11,7 @@ import (
 	"github.com/stukennedy/tooey/component"
 	"github.com/stukennedy/tooey/input"
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 
 	"golang.org/x/term"
 )
@@ -107,8 +108,8 @@ func main() {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	a := &app.App{
-		Init: func() interface{} {
+	a := &app.App[*maudeModel]{
+		Init: func() *maudeModel {
 			w, h := input.TermSize()
 			return &maudeModel{
 				width:  w,
@@ -131,9 +132,7 @@ func main() {
 	}
 }
 
-func maudeUpdate(m interface{}, msg app.Msg) app.UpdateResult {
-	mdl := m.(*maudeModel)
-
+func maudeUpdate(mdl *maudeModel, msg app.Msg) app.UpdateResult[*maudeModel] {
 	switch msg := msg.(type) {
 	case app.ResizeMsg:
 		mdl.width, mdl.height = msg.Width, msg.Height
@@ -193,8 +192,7 @@ func maudeUpdate(m interface{}, msg app.Msg) app.UpdateResult {
 	return app.NoCmd(mdl)
 }
 
-func maudeView(m interface{}, focused string) node.Node {
-	mdl := m.(*maudeModel)
+func maudeView(mdl *maudeModel, focused string) node.Node {
 	w := mdl.width
 
 	// --- Status bar ---
@@ -341,7 +339,7 @@ func renderContentLine(line string, isDiff bool, maxWidth int) node.Node {
 
 func renderDiffLine(text string, fg, bg, hiBG node.Color, maxWidth int) node.Node {
 	// Pad to fill width for full-line background color
-	textLen := len([]rune(text))
+	textLen := textwidth.String(text)
 	fill := maxWidth - 4 // account for box borders + padding
 	if fill > textLen {
 		text += strings.Repeat(" ", fill-textLen)

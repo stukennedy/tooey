@@ -1,10 +1,9 @@
 package cell
 
 import (
-	"strings"
-
 	"github.com/stukennedy/tooey/layout"
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 // Paint renders a layout tree into the cell buffer.
@@ -18,42 +17,70 @@ func paintNode(buf *Buffer, ln layout.LayoutNode, clip layout.Rect) {
 
 	switch n.Type {
 	case node.TextNode:
-		paintText(buf, n, r, clip)
+		paintText(buf, ln, clip)
 	case node.BoxNode:
 		paintBox(buf, n, r, clip)
 	}
 
-	// Recurse into children, clipping to parent rect
-	childClip := intersect(r, clip)
+	// Recurse into children, clipping to the parent's content box
+	// (inside padding, and inside a Box border).
+	content := r
+	if n.Type == node.BoxNode && n.Props.Border != node.BorderNone {
+		content = layout.Rect{X: content.X + 1, Y: content.Y + 1, W: content.W - 2, H: content.H - 2}
+	}
+	content.X += n.Props.PadLeft
+	content.Y += n.Props.PadTop
+	content.W -= n.Props.PadLeft + n.Props.PadRight
+	content.H -= n.Props.PadTop + n.Props.PadBottom
+	if content.W < 0 {
+		content.W = 0
+	}
+	if content.H < 0 {
+		content.H = 0
+	}
+	childClip := intersect(content, clip)
 	for _, child := range ln.Children {
 		paintNode(buf, child, childClip)
 	}
 }
 
-func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
-	// First, if BG is set, fill the rect so background shows for spaces
-	if n.Props.BG != 0 {
-		for y := r.Y; y < r.Y+r.H && y < clip.Y+clip.H; y++ {
-			if y < clip.Y {
-				continue
-			}
-			for x := r.X; x < r.X+r.W && x < clip.X+clip.W; x++ {
-				if x >= clip.X {
-					buf.Set(x, y, Cell{Rune: ' ', BG: n.Props.BG})
-				}
-			}
-		}
+func paintText(buf *Buffer, ln layout.LayoutNode, clip layout.Rect) {
+	n := ln.Node
+	r := ln.Rect
+
+	// A text node never paints outside its own rect, even when a line
+	// is wider or taller than the space it was given.
+	clip = intersect(r, clip)
+	if clip.W == 0 || clip.H == 0 {
+		return
 	}
 
-	lines := wrapText(n.Props.Text, r.W)
+	// If BG is set, fill the rect so the background shows for spaces.
+	if n.Props.BG != 0 {
+		fillRect(buf, clip, Cell{Rune: ' ', FG: n.Props.FG, BG: n.Props.BG})
+	}
+
+	pt, pl := n.Props.PadTop, n.Props.PadLeft
+	lines := ln.Lines
+	if lines == nil {
+		// Fallback for callers painting a hand-built layout tree.
+		lines = textLines(n, r.W-pl-n.Props.PadRight)
+	}
 	for row, line := range lines {
-		y := r.Y + row
-		if y < clip.Y || y >= clip.Y+clip.H {
+		y := r.Y + pt + row
+		if y < clip.Y {
 			continue
 		}
-		col := r.X
+		if y >= clip.Y+clip.H {
+			break
+		}
+		col := r.X + pl
 		for _, ch := range line {
-			if col >= clip.X+clip.W {
+			w := textwidth.Rune(ch)
+			if w == 0 {
+				continue
+			}
+			if col+w > clip.X+clip.W {
 				break
 			}
 			if col >= clip.X {
@@ -64,12 +91,39 @@ func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 					Style: n.Props.Style,
 				})
 			}
-			col++
+			col += w
+		}
+	}
+}
+
+// textLines mirrors layout's wrapping for text painted without a
+// layout-computed Lines slice.
+func textLines(n node.Node, width int) []string {
+	if n.Props.NoWrap {
+		return textwidth.SplitLines(n.Props.Text)
+	}
+	return textwidth.Wrap(n.Props.Text, width)
+}
+
+// fillRect writes c to every cell of r (caller pre-clips r).
+func fillRect(buf *Buffer, r layout.Rect, c Cell) {
+	for y := r.Y; y < r.Y+r.H; y++ {
+		for x := r.X; x < r.X+r.W; x++ {
+			buf.Set(x, y, c)
 		}
 	}
 }
 
 func paintBox(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
+	fg, bg, style := n.Props.FG, n.Props.BG, n.Props.Style
+
+	// A background fills the whole rect (so overlays occlude content
+	// beneath them); children paint over it afterwards. Style is left
+	// off the fill so underline/reverse don't smear across blank cells.
+	if bg != 0 {
+		fillRect(buf, intersect(r, clip), Cell{Rune: ' ', FG: fg, BG: bg})
+	}
+
 	if r.W < 2 || r.H < 2 {
 		return
 	}
@@ -85,8 +139,6 @@ func paintBox(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 	default:
 		return
 	}
-
-	fg, bg, style := n.Props.FG, n.Props.BG, n.Props.Style
 
 	setClipped := func(x, y int, ch rune) {
 		if x >= clip.X && x < clip.X+clip.W && y >= clip.Y && y < clip.Y+clip.H {
@@ -124,56 +176,3 @@ func intersect(a, b layout.Rect) layout.Rect {
 	return layout.Rect{X: x1, Y: y1, W: x2 - x1, H: y2 - y1}
 }
 
-// wrapText splits text into lines that fit within maxWidth, preserving leading whitespace.
-func wrapText(s string, maxWidth int) []string {
-	if maxWidth <= 0 {
-		return nil
-	}
-	if s == "" {
-		return []string{""}
-	}
-
-	// Split on existing newlines first
-	rawLines := strings.Split(s, "\n")
-	var result []string
-	for _, raw := range rawLines {
-		// Preserve leading whitespace
-		trimmed := strings.TrimLeft(raw, " \t")
-		leading := raw[:len(raw)-len(trimmed)]
-
-		if trimmed == "" {
-			result = append(result, leading)
-			continue
-		}
-
-		words := strings.Fields(trimmed)
-		if len(words) == 0 {
-			result = append(result, leading)
-			continue
-		}
-
-		line := leading + words[0]
-		lineLen := runeCount(line)
-		for _, w := range words[1:] {
-			wLen := runeCount(w)
-			if lineLen+1+wLen <= maxWidth {
-				line += " " + w
-				lineLen += 1 + wLen
-			} else {
-				result = append(result, line)
-				line = leading + w
-				lineLen = runeCount(leading) + wLen
-			}
-		}
-		result = append(result, line)
-	}
-	return result
-}
-
-func runeCount(s string) int {
-	n := 0
-	for range s {
-		n++
-	}
-	return n
-}

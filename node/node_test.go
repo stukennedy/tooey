@@ -126,9 +126,20 @@ func TestPad(t *testing.T) {
 	if n.Type != ColumnNode {
 		t.Fatal("expected ColumnNode")
 	}
-	// top(1) + row + bottom(1) = 3 children
-	if len(n.Children) != 3 {
-		t.Fatalf("expected 3 children, got %d", len(n.Children))
+	if len(n.Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(n.Children))
+	}
+	p := n.Props
+	if p.PadTop != 1 || p.PadRight != 2 || p.PadBottom != 1 || p.PadLeft != 3 {
+		t.Fatalf("padding props wrong: %+v", p)
+	}
+}
+
+func TestWithPaddingAll(t *testing.T) {
+	n := Text("x").WithPaddingAll(2)
+	p := n.Props
+	if p.PadTop != 2 || p.PadRight != 2 || p.PadBottom != 2 || p.PadLeft != 2 {
+		t.Fatalf("padding props wrong: %+v", p)
 	}
 }
 

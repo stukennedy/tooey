@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 func TestTextLayout(t *testing.T) {
@@ -98,7 +99,7 @@ func TestBoxBorderInset(t *testing.T) {
 }
 
 func TestTextWrap(t *testing.T) {
-	lines := wrapText("hello world foo", 11)
+	lines := textwidth.Wrap("hello world foo", 11)
 	// "hello world" = 11 <= 11, then "foo" doesn't fit (11+1+3=15>11)
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
@@ -112,7 +113,7 @@ func TestTextWrap(t *testing.T) {
 }
 
 func TestTextWrapNarrow(t *testing.T) {
-	lines := wrapText("hello world foo", 6)
+	lines := textwidth.Wrap("hello world foo", 6)
 	// "hello" (5<=6), "world" (5<=6), "foo" (3<=6)
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d: %v", len(lines), lines)

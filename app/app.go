@@ -33,14 +33,43 @@ type FocusMsg struct {
 	Focused bool
 }
 
+// FocusChangedMsg reports that the focused node changed (Tab, click, or
+// a focus scope opening/closing). Key is the newly focused node's key,
+// "" if nothing is focused. Mirror it into your model when Update needs
+// to know what is focused (e.g. Enter activating the focused button).
+type FocusChangedMsg struct {
+	Key string
+}
+
+// DismissMsg reports Escape pressed while a focus scope was active.
+// Scope is the scope's identity key (Props.Key when set). Handle it by
+// removing the scope from your view (e.g. closing the modal); Escape
+// arrives as a plain KeyMsg only when no scope is active.
+type DismissMsg struct {
+	Scope string
+}
+
 // PasteMsg carries text from a bracketed paste event.
 type PasteMsg struct {
 	Text string
 }
 
-// ScrollMsg indicates a mouse scroll event. Delta is positive for scroll up, negative for scroll down.
+// ScrollMsg indicates a mouse scroll event. Delta is positive for scroll
+// up, negative for scroll down. X, Y is the cell under the cursor.
 type ScrollMsg struct {
 	Delta int
+	X, Y  int
+}
+
+// ClickMsg indicates a mouse click. Key is the key of the deepest keyed
+// node under the cursor ("" if none). Clicking a focusable node also
+// moves focus to it before Update runs. While a focus scope (modal) is
+// active, clicks outside the scope report Key "" — background controls
+// cannot be activated or focused through a modal, but the ClickMsg
+// still arrives so apps can e.g. dismiss on outside click.
+type ClickMsg struct {
+	X, Y int
+	Key  string
 }
 
 // Cmd is a function that runs asynchronously and returns a Msg.
@@ -51,38 +80,45 @@ type Cmd func() Msg
 type Sub func(send func(Msg)) Msg
 
 // UpdateResult is returned from Update: new model + optional async commands.
-type UpdateResult struct {
-	Model interface{}
+// Set Quit (via the Quit helper) to stop the application.
+type UpdateResult[M any] struct {
+	Model M
+	Quit  bool
 	Cmds  []Cmd
 	Subs  []Sub
 }
 
 // NoCmd returns an UpdateResult with no commands.
-func NoCmd(model interface{}) UpdateResult {
-	return UpdateResult{Model: model}
+func NoCmd[M any](model M) UpdateResult[M] {
+	return UpdateResult[M]{Model: model}
 }
 
 // WithCmd returns an UpdateResult with commands to execute.
-func WithCmd(model interface{}, cmds ...Cmd) UpdateResult {
-	return UpdateResult{Model: model, Cmds: cmds}
+func WithCmd[M any](model M, cmds ...Cmd) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Cmds: cmds}
 }
 
 // WithSub returns an UpdateResult with subscriptions.
-func WithSub(model interface{}, subs ...Sub) UpdateResult {
-	return UpdateResult{Model: model, Subs: subs}
+func WithSub[M any](model M, subs ...Sub) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Subs: subs}
 }
 
-// App defines an Elm-style TUI application.
-type App struct {
+// Quit returns an UpdateResult that stops the application.
+func Quit[M any](model M) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Quit: true}
+}
+
+// App defines an Elm-style TUI application over a model type M.
+type App[M any] struct {
 	// Init returns the initial model.
-	Init func() interface{}
+	Init func() M
 
 	// Update processes a message and returns the new model + optional commands.
-	// Return UpdateResult with nil Model to quit.
-	Update func(model interface{}, msg Msg) UpdateResult
+	// Return Quit(model) to stop the application.
+	Update func(model M, msg Msg) UpdateResult[M]
 
 	// View renders the model to a node tree.
-	View func(model interface{}, focused string) node.Node
+	View func(model M, focused string) node.Node
 
 	// Output writer (defaults to os.Stdout).
 	Output io.Writer
@@ -91,8 +127,39 @@ type App struct {
 	Input io.Reader
 }
 
+// resolveClick converts a click hit path into the key to report,
+// moving focus to the clicked focusable. While a focus scope is active,
+// clicks that land outside the scope's subtree report no key and cannot
+// move focus.
+func resolveClick(path []layout.LayoutNode, fm *focus.Manager) string {
+	if fm.ActiveScope() != "" {
+		inScope := false
+		for _, ln := range path {
+			if ln.Node.Props.FocusScope {
+				inScope = true
+				break
+			}
+		}
+		if !inScope {
+			return ""
+		}
+	}
+	key := ""
+	for i := len(path) - 1; i >= 0; i-- {
+		props := path[i].Node.Props
+		if key == "" && props.Key != "" {
+			key = props.Key
+		}
+		if props.Focusable && props.Key != "" {
+			fm.Focus(props.Key)
+			break
+		}
+	}
+	return key
+}
+
 // Run starts the application main loop.
-func (a *App) Run(ctx context.Context) error {
+func (a *App[M]) Run(ctx context.Context) error {
 	out := a.Output
 	if out == nil {
 		out = os.Stdout
@@ -127,6 +194,42 @@ func (a *App) Run(ctx context.Context) error {
 	fm := focus.NewManager()
 
 	var prevBuf *cell.Buffer
+	var lastLayout *layout.LayoutNode
+	var lastFocused string
+
+	// toMsg translates a raw key event into an app message; nil means
+	// the event is consumed (e.g. mouse button release).
+	toMsg := func(k input.Key) Msg {
+		switch k.Type {
+		case input.FocusIn:
+			return FocusMsg{Focused: true}
+		case input.FocusOut:
+			return FocusMsg{Focused: false}
+		case input.MouseScrollUp:
+			return ScrollMsg{Delta: 3, X: k.MouseX, Y: k.MouseY}
+		case input.MouseScrollDown:
+			return ScrollMsg{Delta: -3, X: k.MouseX, Y: k.MouseY}
+		case input.MouseRelease:
+			return nil
+		case input.MouseClick:
+			key := ""
+			if lastLayout != nil {
+				key = resolveClick(layout.HitTest(*lastLayout, k.MouseX, k.MouseY), fm)
+			}
+			return ClickMsg{X: k.MouseX, Y: k.MouseY, Key: key}
+		case input.Escape:
+			// Escape dismisses the active focus scope (modal) rather
+			// than arriving as a raw key.
+			if s := fm.ActiveScope(); s != "" {
+				return DismissMsg{Scope: s}
+			}
+			return KeyMsg{Key: k}
+		case input.Paste:
+			return PasteMsg{Text: k.Text}
+		default:
+			return KeyMsg{Key: k}
+		}
+	}
 
 	// Message channels
 	keyCh := input.ReadKeys(ctx, in)
@@ -149,19 +252,8 @@ func (a *App) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			switch k.Type {
-			case input.FocusIn:
-				msgs = append(msgs, FocusMsg{Focused: true})
-			case input.FocusOut:
-				msgs = append(msgs, FocusMsg{Focused: false})
-			case input.MouseScrollUp:
-				msgs = append(msgs, ScrollMsg{Delta: 3})
-			case input.MouseScrollDown:
-				msgs = append(msgs, ScrollMsg{Delta: -3})
-			case input.Paste:
-				msgs = append(msgs, PasteMsg{Text: k.Text})
-			default:
-				msgs = append(msgs, KeyMsg{Key: k})
+			if m := toMsg(k); m != nil {
+				msgs = append(msgs, m)
 			}
 			needsRender = true
 		case r, ok := <-resizeCh:
@@ -189,15 +281,8 @@ func (a *App) Run(ctx context.Context) error {
 					draining = false
 					continue
 				}
-				switch k.Type {
-				case input.FocusIn:
-					msgs = append(msgs, FocusMsg{Focused: true})
-				case input.FocusOut:
-					msgs = append(msgs, FocusMsg{Focused: false})
-				case input.Paste:
-					msgs = append(msgs, PasteMsg{Text: k.Text})
-				default:
-					msgs = append(msgs, KeyMsg{Key: k})
+				if m := toMsg(k); m != nil {
+					msgs = append(msgs, m)
 				}
 				needsRender = true
 			case cmdMsg := <-cmdCh:
@@ -220,8 +305,6 @@ func (a *App) Run(ctx context.Context) error {
 					fm.Next()
 				case input.ShiftTab:
 					fm.Prev()
-				case input.Escape:
-					fm.PopContext()
 				}
 			}
 		}
@@ -230,7 +313,7 @@ func (a *App) Run(ctx context.Context) error {
 		for _, msg := range msgs {
 			result := a.Update(model, msg)
 			model = result.Model
-			if model == nil {
+			if result.Quit {
 				return nil
 			}
 			// Launch async commands
@@ -258,6 +341,15 @@ func (a *App) Run(ctx context.Context) error {
 		tree := a.View(model, fm.Current())
 		lt := layout.Layout(tree, width, height)
 		fm.Update(lt)
+		lastLayout = &lt
+
+		// Tell Update when focus moved (Tab, click, or scope change) so
+		// models can mirror the focused key.
+		if cur := fm.Current(); cur != lastFocused {
+			lastFocused = cur
+			msgs = append(msgs, FocusChangedMsg{Key: cur})
+			needsRender = true
+		}
 
 		buf := cell.NewBuffer(width, height)
 		cell.Paint(buf, lt)
@@ -270,6 +362,8 @@ func (a *App) Run(ctx context.Context) error {
 		ansi.Render(out, changes)
 
 		prevBuf = buf
-		needsRender = false
+		// Keep rendering pending if the frame itself queued messages
+		// (e.g. FocusChangedMsg) so they process on the next tick.
+		needsRender = len(msgs) > 0
 	}
 }

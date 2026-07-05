@@ -6,6 +6,7 @@ import (
 
 	"github.com/stukennedy/tooey/input"
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 // TextInput holds state for a multi-line text input with cursor.
@@ -113,7 +114,7 @@ func (ti TextInput) Render(prefix string, fg, bg node.Color, width int) node.Nod
 	}
 
 	runes := []rune(ti.Value)
-	prefixWidth := len([]rune(prefix))
+	prefixWidth := textwidth.String(prefix)
 	contPrefix := strings.Repeat(" ", prefixWidth)
 
 	// Split into logical lines (from newlines), then word-wrap each
@@ -303,7 +304,8 @@ func wordRight(runes []rune, cursor int) int {
 	return i
 }
 
-// wrapLine word-wraps a single line to fit within the given width.
+// wrapLine word-wraps a single line to fit within the given width,
+// measured in display cells (wide runes count as two).
 // prefixWidth is the width consumed by the line prefix.
 // If width is 0, no wrapping is performed.
 func wrapLine(line string, width, prefixWidth int) []string {
@@ -316,29 +318,42 @@ func wrapLine(line string, width, prefixWidth int) []string {
 	}
 
 	runes := []rune(line)
-	if len(runes) <= availWidth {
+	if textwidth.String(line) <= availWidth {
 		return []string{line}
 	}
 
 	var result []string
 	for len(runes) > 0 {
-		if len(runes) <= availWidth {
+		// How many runes fit in availWidth display cells?
+		w := 0
+		fit := len(runes)
+		for i, r := range runes {
+			rw := textwidth.Rune(r)
+			if w+rw > availWidth {
+				fit = i
+				break
+			}
+			w += rw
+		}
+		if fit >= len(runes) {
 			result = append(result, string(runes))
 			break
 		}
-		// Find the last space at or before availWidth
+		if fit == 0 {
+			fit = 1 // always consume at least one rune
+		}
+		// Prefer breaking at the last space within the fitting span.
 		breakAt := -1
-		for i := availWidth; i >= 0; i-- {
+		for i := fit; i >= 0; i-- {
 			if i < len(runes) && runes[i] == ' ' {
 				breakAt = i
 				break
 			}
 		}
 		if breakAt <= 0 {
-			// No space found — break at availWidth (mid-word as fallback)
-			breakAt = availWidth
-			result = append(result, string(runes[:breakAt]))
-			runes = runes[breakAt:]
+			// No space found — break mid-word as fallback
+			result = append(result, string(runes[:fit]))
+			runes = runes[fit:]
 		} else {
 			result = append(result, string(runes[:breakAt]))
 			runes = runes[breakAt+1:] // skip the space

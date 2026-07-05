@@ -1,15 +1,18 @@
 name: Release
 
+# A release is cut by adding .github/release-notes/<tag>.md to main:
+# this workflow creates the matching tag and GitHub release. Manual
+# dispatch is also supported where permissions allow.
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/release-notes/*.md"
   workflow_dispatch:
     inputs:
       tag:
         description: "Tag to create (e.g. v0.5.0)"
         required: true
-      target:
-        description: "Commit SHA or branch to tag"
-        required: false
-        default: "main"
 
 permissions:
   contents: write
@@ -19,16 +22,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Create tag and release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes=".github/release-notes/${{ inputs.tag }}.md"
-          if [ ! -f "$notes" ]; then
-            echo "missing $notes" >&2
-            exit 1
+          set -eu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tags="${{ inputs.tag }}"
+          else
+            tags=$(git diff --name-only "${{ github.event.before }}" "${{ github.event.after }}" -- '.github/release-notes/*.md' \
+              | xargs -rn1 basename | sed 's/\.md$//')
           fi
-          gh release create "${{ inputs.tag }}" \
-            --target "${{ inputs.target }}" \
-            --title "tooey ${{ inputs.tag }}" \
-            --notes-file "$notes"
+          for tag in $tags; do
+            notes=".github/release-notes/$tag.md"
+            if [ ! -f "$notes" ]; then
+              echo "missing $notes, skipping" >&2
+              continue
+            fi
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag already released, skipping"
+              continue
+            fi
+            gh release create "$tag" \
+              --target "${{ github.sha }}" \
+              --title "tooey $tag" \
+              --notes-file "$notes"
+          done

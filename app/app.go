@@ -41,6 +41,14 @@ type FocusChangedMsg struct {
 	Key string
 }
 
+// DismissMsg reports Escape pressed while a focus scope was active.
+// Scope is the scope's identity key (Props.Key when set). Handle it by
+// removing the scope from your view (e.g. closing the modal); Escape
+// arrives as a plain KeyMsg only when no scope is active.
+type DismissMsg struct {
+	Scope string
+}
+
 // PasteMsg carries text from a bracketed paste event.
 type PasteMsg struct {
 	Text string
@@ -185,6 +193,13 @@ func (a *App[M]) Run(ctx context.Context) error {
 				}
 			}
 			return ClickMsg{X: k.MouseX, Y: k.MouseY, Key: key}
+		case input.Escape:
+			// Escape dismisses the active focus scope (modal) rather
+			// than arriving as a raw key.
+			if s := fm.ActiveScope(); s != "" {
+				return DismissMsg{Scope: s}
+			}
+			return KeyMsg{Key: k}
 		case input.Paste:
 			return PasteMsg{Text: k.Text}
 		default:

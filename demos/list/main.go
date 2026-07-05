@@ -48,15 +48,14 @@ func main() {
 				case "confirm-no":
 					mdl.modalOpen = false
 				}
+			case app.DismissMsg:
+				mdl.modalOpen = false
 			case app.KeyMsg:
 				if mdl.modalOpen {
-					switch msg.Key.Type {
-					case input.Enter:
+					if msg.Key.Type == input.Enter {
 						if mdl.focused == "confirm-yes" {
 							mdl.counter++
 						}
-						mdl.modalOpen = false
-					case input.Escape:
 						mdl.modalOpen = false
 					}
 					return app.NoCmd(mdl)

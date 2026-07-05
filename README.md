@@ -162,6 +162,7 @@ Return `app.Quit(model)` to quit.
 | `app.ScrollMsg` | Mouse scroll wheel (with cursor position) |
 | `app.ClickMsg` | Mouse click — carries `X`, `Y`, and the `Key` of the node under the cursor |
 | `app.FocusChangedMsg` | Focused node changed (Tab, click, or focus scope open/close) — carries the new `Key` |
+| `app.DismissMsg` | Escape pressed while a focus scope was active — carries the scope's key; close the modal in Update |
 | `app.PasteMsg` | Bracketed paste |
 
 Clicks are hit-tested against the rendered layout: clicking a focusable
@@ -211,7 +212,7 @@ dialog := node.Box(node.BorderRounded, buttons).
 return node.Overlay(mainUI, node.Centered(dialog))
 ```
 
-No imperative push/pop — like everything else, the active focus scope is a pure function of the view. See `demos/list` for a working confirm dialog.
+While a scope is active, Escape arrives as `app.DismissMsg{Scope}` instead of a raw key — handle it by closing the modal. No imperative push/pop — like everything else, the active focus scope is a pure function of the view. See `demos/list` for a working confirm dialog.
 
 ## Scrolling
 

@@ -103,6 +103,12 @@ func activeScope(tree *layout.LayoutNode) (*layout.LayoutNode, string) {
 	return root, key
 }
 
+// ActiveScope returns the identity key of the active focus scope, or
+// "" when focus spans the whole tree.
+func (m *Manager) ActiveScope() string {
+	return m.scopeKey
+}
+
 // Current returns the key of the currently focused node, or "" if none.
 func (m *Manager) Current() string {
 	if len(m.focusables) == 0 {

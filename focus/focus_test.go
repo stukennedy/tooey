@@ -122,6 +122,23 @@ func TestFocusScopeNested(t *testing.T) {
 	}
 }
 
+func TestActiveScope(t *testing.T) {
+	m := NewManager()
+	m.Update(layout.Layout(baseItems(), 80, 24))
+	if m.ActiveScope() != "" {
+		t.Fatalf("no scope expected, got %q", m.ActiveScope())
+	}
+	withModal := node.Overlay(baseItems(), modal("dlg", "yes", "no"))
+	m.Update(layout.Layout(withModal, 80, 24))
+	if m.ActiveScope() != "dlg" {
+		t.Fatalf("expected scope 'dlg', got %q", m.ActiveScope())
+	}
+	m.Update(layout.Layout(baseItems(), 80, 24))
+	if m.ActiveScope() != "" {
+		t.Fatalf("scope should clear after close, got %q", m.ActiveScope())
+	}
+}
+
 func TestFocusScopeStalePersistsAcrossFrames(t *testing.T) {
 	m := NewManager()
 	withModal := node.Overlay(baseItems(), modal("dlg", "yes", "no"))

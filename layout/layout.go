@@ -2,9 +2,9 @@ package layout
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 // Rect is a positioned rectangle in terminal coordinates.
@@ -212,7 +212,7 @@ func measureWidth(n node.Node, avail Rect) int {
 	}
 	switch n.Type {
 	case node.TextNode:
-		return utf8.RuneCountInString(n.Props.Text)
+		return textwidth.String(n.Props.Text)
 	case node.BoxNode:
 		if len(n.Children) > 0 {
 			return measureWidth(n.Children[0], avail) + 2
@@ -303,16 +303,16 @@ func wrapText(s string, maxWidth int) []string {
 			continue
 		}
 		line := leading + words[0]
-		lineLen := utf8.RuneCountInString(line)
+		lineLen := textwidth.String(line)
 		for _, w := range words[1:] {
-			wLen := utf8.RuneCountInString(w)
+			wLen := textwidth.String(w)
 			if lineLen+1+wLen <= maxWidth {
 				line += " " + w
 				lineLen += 1 + wLen
 			} else {
 				lines = append(lines, line)
 				line = leading + w
-				lineLen = utf8.RuneCountInString(leading) + wLen
+				lineLen = textwidth.String(leading) + wLen
 			}
 		}
 		lines = append(lines, line)

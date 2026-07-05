@@ -1,6 +1,10 @@
 package node
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/stukennedy/tooey/textwidth"
+)
 
 // NodeType identifies the kind of UI node.
 type NodeType int
@@ -221,19 +225,10 @@ func SeparatorStyled(ch rune, width int, fg Color) Node {
 	return TextStyled(strings.Repeat(string(ch), width), fg, 0, 0)
 }
 
-// Truncate truncates text to maxWidth, adding "…" if it exceeds the limit.
+// Truncate truncates text to maxWidth display cells, adding "…" if it
+// exceeds the limit. Wide characters count as two cells.
 func Truncate(text string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	runes := []rune(text)
-	if len(runes) <= maxWidth {
-		return text
-	}
-	if maxWidth == 1 {
-		return "…"
-	}
-	return string(runes[:maxWidth-1]) + "…"
+	return textwidth.Truncate(text, maxWidth)
 }
 
 // Indent wraps a child node with left indentation.

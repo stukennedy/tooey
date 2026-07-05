@@ -5,6 +5,7 @@ import (
 
 	"github.com/stukennedy/tooey/layout"
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 )
 
 // Paint renders a layout tree into the cell buffer.
@@ -53,7 +54,11 @@ func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 		}
 		col := r.X
 		for _, ch := range line {
-			if col >= clip.X+clip.W {
+			w := textwidth.Rune(ch)
+			if w == 0 {
+				continue
+			}
+			if col+w > clip.X+clip.W {
 				break
 			}
 			if col >= clip.X {
@@ -64,7 +69,7 @@ func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 					Style: n.Props.Style,
 				})
 			}
-			col++
+			col += w
 		}
 	}
 }
@@ -153,27 +158,19 @@ func wrapText(s string, maxWidth int) []string {
 		}
 
 		line := leading + words[0]
-		lineLen := runeCount(line)
+		lineLen := textwidth.String(line)
 		for _, w := range words[1:] {
-			wLen := runeCount(w)
+			wLen := textwidth.String(w)
 			if lineLen+1+wLen <= maxWidth {
 				line += " " + w
 				lineLen += 1 + wLen
 			} else {
 				result = append(result, line)
 				line = leading + w
-				lineLen = runeCount(leading) + wLen
+				lineLen = textwidth.String(leading) + wLen
 			}
 		}
 		result = append(result, line)
 	}
 	return result
-}
-
-func runeCount(s string) int {
-	n := 0
-	for range s {
-		n++
-	}
-	return n
 }

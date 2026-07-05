@@ -1,8 +1,6 @@
 package layout
 
 import (
-	"strings"
-
 	"github.com/stukennedy/tooey/node"
 	"github.com/stukennedy/tooey/textwidth"
 )
@@ -17,6 +15,27 @@ type LayoutNode struct {
 	Node     node.Node
 	Rect     Rect
 	Children []LayoutNode
+
+	// Lines holds the wrapped text lines for TextNodes, computed once
+	// during layout so paint doesn't re-wrap.
+	Lines []string
+}
+
+// textLines returns the render lines for a text node at the given
+// content width, honoring NoWrap.
+func textLines(n node.Node, width int) []string {
+	if n.Props.NoWrap {
+		return textwidth.SplitLines(n.Props.Text)
+	}
+	return textwidth.Wrap(n.Props.Text, width)
+}
+
+// borderInset returns 1 when the node draws a border, else 0.
+func borderInset(n node.Node) int {
+	if n.Props.Border != node.BorderNone {
+		return 1
+	}
+	return 0
 }
 
 // Layout computes positions for the node tree within the given terminal size.
@@ -55,15 +74,16 @@ func layout(n node.Node, avail Rect) LayoutNode {
 
 func layoutText(n node.Node, avail Rect) LayoutNode {
 	pt, pr, pb, pl := padding(n)
-	lines := wrapText(n.Props.Text, avail.W-pl-pr)
+	lines := textLines(n, avail.W-pl-pr)
 	h := len(lines) + pt + pb
 	if h > avail.H {
 		h = avail.H
 	}
 	// Text uses the full available width (important for flex-allocated space)
 	return LayoutNode{
-		Node: n,
-		Rect: Rect{avail.X, avail.Y, avail.W, h},
+		Node:  n,
+		Rect:  Rect{avail.X, avail.Y, avail.W, h},
+		Lines: lines,
 	}
 }
 
@@ -193,13 +213,14 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	if len(n.Children) == 0 {
 		return ln
 	}
-	// Border takes 1 cell on each side; padding applies inside the border.
+	// A drawn border takes 1 cell on each side; padding applies inside it.
+	b := borderInset(n)
 	pt, pr, pb, pl := padding(n)
 	innerRect := Rect{
-		X: avail.X + 1 + pl,
-		Y: avail.Y + 1 + pt,
-		W: avail.W - 2 - pl - pr,
-		H: avail.H - 2 - pt - pb,
+		X: avail.X + b + pl,
+		Y: avail.Y + b + pt,
+		W: avail.W - 2*b - pl - pr,
+		H: avail.H - 2*b - pt - pb,
 	}
 	if innerRect.W < 0 {
 		innerRect.W = 0
@@ -248,12 +269,19 @@ func measureWidth(n node.Node, avail Rect) int {
 	_, pr, _, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		return textwidth.String(n.Props.Text) + pl + pr
-	case node.BoxNode:
-		if len(n.Children) > 0 {
-			return measureWidth(n.Children[0], avail) + 2 + pl + pr
+		w := 0
+		for _, l := range textwidth.SplitLines(n.Props.Text) {
+			if lw := textwidth.String(l); lw > w {
+				w = lw
+			}
 		}
-		return 2 + pl + pr
+		return w + pl + pr
+	case node.BoxNode:
+		b := 2 * borderInset(n)
+		if len(n.Children) > 0 {
+			return measureWidth(n.Children[0], avail) + b + pl + pr
+		}
+		return b + pl + pr
 	case node.RowNode:
 		w := 0
 		for _, c := range n.Children {
@@ -261,11 +289,17 @@ func measureWidth(n node.Node, avail Rect) int {
 		}
 		return w + pl + pr
 	case node.OverlayNode:
-		// The base layer defines the overlay's intrinsic size.
-		if len(n.Children) > 0 {
-			return measureWidth(n.Children[0], avail) + pl + pr
+		// Wide enough for the widest layer.
+		w := 0
+		for _, c := range n.Children {
+			if cw := measureWidth(c, avail); cw > w {
+				w = cw
+			}
 		}
-		return avail.W
+		if w == 0 {
+			return avail.W
+		}
+		return w + pl + pr
 	default:
 		return avail.W
 	}
@@ -279,17 +313,18 @@ func measureHeight(n node.Node, avail Rect) int {
 	pt, pr, pb, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		lines := wrapText(n.Props.Text, avail.W-pl-pr)
+		lines := textLines(n, avail.W-pl-pr)
 		return len(lines) + pt + pb
 	case node.BoxNode:
+		b := 2 * borderInset(n)
 		if len(n.Children) > 0 {
-			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - 2 - pl - pr, H: avail.H}
+			innerAvail := Rect{X: avail.X, Y: avail.Y, W: avail.W - b - pl - pr, H: avail.H}
 			if innerAvail.W < 0 {
 				innerAvail.W = 0
 			}
-			return measureHeight(n.Children[0], innerAvail) + 2 + pt + pb
+			return measureHeight(n.Children[0], innerAvail) + b + pt + pb
 		}
-		return 2 + pt + pb
+		return b + pt + pb
 	case node.ColumnNode, node.ListNode, node.PaneNode:
 		h := 0
 		for _, c := range n.Children {
@@ -306,11 +341,17 @@ func measureHeight(n node.Node, avail Rect) int {
 		}
 		return h + pt + pb
 	case node.OverlayNode:
-		// The base layer defines the overlay's intrinsic size.
-		if len(n.Children) > 0 {
-			return measureHeight(n.Children[0], avail) + pt + pb
+		// Tall enough for the tallest layer.
+		h := 0
+		for _, c := range n.Children {
+			if ch := measureHeight(c, avail); ch > h {
+				h = ch
+			}
 		}
-		return 1
+		if h == 0 {
+			return 1
+		}
+		return h + pt + pb
 	default:
 		return 1
 	}
@@ -326,51 +367,4 @@ func shiftY(ln *LayoutNode, dy int) {
 
 func flexWeight(n node.Node) int {
 	return n.Props.FlexWeight
-}
-
-// wrapText wraps text to fit within maxWidth columns.
-func wrapText(s string, maxWidth int) []string {
-	if maxWidth <= 0 {
-		return nil
-	}
-	if s == "" {
-		return []string{""}
-	}
-
-	var lines []string
-	for _, paragraph := range strings.Split(s, "\n") {
-		// A line that already fits is kept verbatim, preserving
-		// internal spacing (e.g. aligned table columns).
-		if textwidth.String(paragraph) <= maxWidth {
-			lines = append(lines, paragraph)
-			continue
-		}
-		trimmed := strings.TrimLeft(paragraph, " \t")
-		leading := paragraph[:len(paragraph)-len(trimmed)]
-
-		if trimmed == "" {
-			lines = append(lines, leading)
-			continue
-		}
-		words := strings.Fields(trimmed)
-		if len(words) == 0 {
-			lines = append(lines, leading)
-			continue
-		}
-		line := leading + words[0]
-		lineLen := textwidth.String(line)
-		for _, w := range words[1:] {
-			wLen := textwidth.String(w)
-			if lineLen+1+wLen <= maxWidth {
-				line += " " + w
-				lineLen += 1 + wLen
-			} else {
-				lines = append(lines, line)
-				line = leading + w
-				lineLen = textwidth.String(leading) + wLen
-			}
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }

@@ -7,7 +7,10 @@
 // matching most modern terminal defaults.
 package textwidth
 
-import "unicode"
+import (
+	"strings"
+	"unicode"
+)
 
 // interval is an inclusive rune range.
 type interval struct {
@@ -135,6 +138,56 @@ func String(s string) int {
 		w += Rune(r)
 	}
 	return w
+}
+
+// SplitLines splits s on newlines, expanding each tab to a single
+// space. Tabs have no well-defined cell width in the renderer, so they
+// are normalized before measurement to keep layout and paint agreeing.
+func SplitLines(s string) []string {
+	s = strings.ReplaceAll(s, "\t", " ")
+	return strings.Split(s, "\n")
+}
+
+// Wrap word-wraps s to fit maxWidth display cells, preserving leading
+// whitespace on wrapped continuation lines. Lines that already fit are
+// kept verbatim (internal spacing intact). A single word wider than
+// maxWidth is left unbroken — the renderer clips it.
+func Wrap(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return nil
+	}
+	if s == "" {
+		return []string{""}
+	}
+	var lines []string
+	for _, raw := range SplitLines(s) {
+		if String(raw) <= maxWidth {
+			lines = append(lines, raw)
+			continue
+		}
+		trimmed := strings.TrimLeft(raw, " ")
+		leading := raw[:len(raw)-len(trimmed)]
+		words := strings.Fields(trimmed)
+		if len(words) == 0 {
+			lines = append(lines, raw)
+			continue
+		}
+		line := leading + words[0]
+		lineLen := String(line)
+		for _, w := range words[1:] {
+			wLen := String(w)
+			if lineLen+1+wLen <= maxWidth {
+				line += " " + w
+				lineLen += 1 + wLen
+			} else {
+				lines = append(lines, line)
+				line = leading + w
+				lineLen = String(leading) + wLen
+			}
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // Truncate cuts s so its display width does not exceed maxWidth,

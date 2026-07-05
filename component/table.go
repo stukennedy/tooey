@@ -35,17 +35,19 @@ func (t Table) Render() node.Node {
 	}
 	widths := t.columnWidths()
 
+	// NoWrap keeps pre-aligned rows intact: over-wide rows clip at the
+	// edge instead of word-wrapping into scrambled columns.
 	children := make([]node.Node, 0, len(t.Rows)+1)
 	if len(t.Headers) > 0 {
 		children = append(children,
-			node.TextStyled(joinRow(t.Headers, widths, gap), t.HeaderFG, t.HeaderBG, node.Bold))
+			node.TextStyled(joinRow(t.Headers, widths, gap), t.HeaderFG, t.HeaderBG, node.Bold).WithNoWrap())
 	}
 	for i, row := range t.Rows {
 		fg, bg, style := t.FG, t.BG, node.StyleFlags(0)
 		if i == t.Selected {
 			fg, bg, style = t.SelectedFG, t.SelectedBG, node.Bold
 		}
-		children = append(children, node.TextStyled(joinRow(row, widths, gap), fg, bg, style))
+		children = append(children, node.TextStyled(joinRow(row, widths, gap), fg, bg, style).WithNoWrap())
 	}
 	return node.Column(children...)
 }

@@ -109,6 +109,7 @@ node.Centered(child)                                   // center a child at intr
 node.Column(items...).WithFlex(1).WithScrollToBottom()
 node.Text("ok").WithKey("btn").WithFocusable()
 node.Column(items...).WithPadding(1, 2, 1, 2)          // top, right, bottom, left
+node.Text("pre-aligned  columns").WithNoWrap()         // clip at edge, never re-wrap
 node.Box(node.BorderRounded, body).WithBG(node.RGB(20, 20, 40))
 ```
 

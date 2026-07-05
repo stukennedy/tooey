@@ -34,9 +34,9 @@ func Render(w io.Writer, changes []diff.Change) {
 		fmt.Fprintf(w, "\x1b[%d;%dH", ch.Y+1, ch.X+1)
 
 		for _, c := range ch.Cells {
-			// Rune 0 is the continuation half of a wide character; the
-			// wide rune itself already advanced the cursor past it.
-			if c.Rune == 0 {
+			// The wide rune before a continuation cell already advanced
+			// the cursor past it.
+			if c.IsContinuation() {
 				continue
 			}
 			if first || c.FG != curFG || c.BG != curBG || c.Style != curStyle {

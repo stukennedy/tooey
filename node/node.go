@@ -134,6 +134,10 @@ type Props struct {
 
 	// Padding insets content from the node's rect (inside a Box border).
 	PadTop, PadRight, PadBottom, PadLeft int
+
+	// NoWrap disables word-wrapping for Text: lines render as-is and
+	// clip at the node's edge (used for pre-aligned content like tables).
+	NoWrap bool
 }
 
 // Node represents a virtual UI element in the component tree.
@@ -263,6 +267,12 @@ func (n Node) WithPadding(top, right, bottom, left int) Node {
 // WithPaddingAll sets the same padding on all four sides.
 func (n Node) WithPaddingAll(p int) Node {
 	return n.WithPadding(p, p, p, p)
+}
+
+// WithNoWrap disables word-wrapping; over-wide lines clip at the edge.
+func (n Node) WithNoWrap() Node {
+	n.Props.NoWrap = true
+	return n
 }
 
 // Bar creates a full-width text node with background color fill.

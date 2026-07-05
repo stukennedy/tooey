@@ -11,6 +11,7 @@ import (
 	"github.com/stukennedy/tooey/component"
 	"github.com/stukennedy/tooey/input"
 	"github.com/stukennedy/tooey/node"
+	"github.com/stukennedy/tooey/textwidth"
 
 	"golang.org/x/term"
 )
@@ -338,7 +339,7 @@ func renderContentLine(line string, isDiff bool, maxWidth int) node.Node {
 
 func renderDiffLine(text string, fg, bg, hiBG node.Color, maxWidth int) node.Node {
 	// Pad to fill width for full-line background color
-	textLen := len([]rune(text))
+	textLen := textwidth.String(text)
 	fill := maxWidth - 4 // account for box borders + padding
 	if fill > textLen {
 		text += strings.Repeat(" ", fill-textLen)

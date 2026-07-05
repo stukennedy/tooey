@@ -11,6 +11,7 @@ package wire
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/stukennedy/tooey/node"
 )
@@ -38,6 +39,7 @@ type Props struct {
 	ScrollOffset   int     `json:"scrollOffset,omitempty"`
 	ScrollToBottom bool    `json:"scrollToBottom,omitempty"`
 	Padding        *[4]int `json:"padding,omitempty"` // top, right, bottom, left
+	NoWrap         bool    `json:"noWrap,omitempty"`
 }
 
 // Color wraps node.Color with a wire-friendly JSON form: a palette
@@ -157,6 +159,7 @@ func fromProps(p node.Props) *Props {
 		Key:            p.Key,
 		ScrollOffset:   p.ScrollOffset,
 		ScrollToBottom: p.ScrollToBottom,
+		NoWrap:         p.NoWrap,
 	}
 	if !p.FG.IsDefault() {
 		wp.FG = &Color{p.FG}
@@ -172,10 +175,9 @@ func fromProps(p node.Props) *Props {
 	if p.PadTop != 0 || p.PadRight != 0 || p.PadBottom != 0 || p.PadLeft != 0 {
 		wp.Padding = &[4]int{p.PadTop, p.PadRight, p.PadBottom, p.PadLeft}
 	}
-	if wp.Text == "" && wp.Width == 0 && wp.Height == 0 && wp.Flex == 0 &&
-		wp.Border == "" && !wp.Focusable && wp.Key == "" &&
-		wp.FG == nil && wp.BG == nil && wp.Style == nil &&
-		wp.ScrollOffset == 0 && !wp.ScrollToBottom && wp.Padding == nil {
+	// Omit fully-default props; DeepEqual keeps this correct as fields
+	// are added without hand-maintaining a field list.
+	if reflect.DeepEqual(wp, Props{}) {
 		return nil
 	}
 	return &wp
@@ -221,6 +223,7 @@ func (wp Props) toProps() (node.Props, error) {
 		Key:            wp.Key,
 		ScrollOffset:   wp.ScrollOffset,
 		ScrollToBottom: wp.ScrollToBottom,
+		NoWrap:         wp.NoWrap,
 	}
 	if wp.FG != nil {
 		p.FG = wp.FG.Color

@@ -40,11 +40,11 @@ func BufferText(buf *cell.Buffer) string {
 	for y := 0; y < buf.Height; y++ {
 		var b strings.Builder
 		for x := 0; x < buf.Width; x++ {
-			r := buf.Get(x, y).Rune
-			if r == 0 {
-				continue // continuation half of a wide rune
+			c := buf.Get(x, y)
+			if c.IsContinuation() {
+				continue
 			}
-			b.WriteRune(r)
+			b.WriteRune(c.Rune)
 		}
 		lines = append(lines, strings.TrimRight(b.String(), " "))
 	}

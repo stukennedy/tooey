@@ -14,6 +14,11 @@ type Cell struct {
 	Style node.StyleFlags
 }
 
+// IsContinuation reports whether this cell is the right half of a wide
+// character. Consumers reading the buffer should skip these cells — the
+// wide rune to the left already spans both.
+func (c Cell) IsContinuation() bool { return c.Rune == 0 }
+
 // Buffer is a row-major flat cell buffer representing a terminal frame.
 type Buffer struct {
 	Width  int
@@ -43,6 +48,14 @@ func (b *Buffer) Set(x, y int, c Cell) {
 		return
 	}
 	i := y*b.Width + x
+
+	// Fast path: a narrow rune over a narrow, non-continuation cell —
+	// no wide-rune bookkeeping needed. Covers ASCII fills and most
+	// writes; the first wide range starts at U+1100.
+	if c.Rune < 0x1100 && b.Cells[i].Rune != 0 && b.Cells[i].Rune < 0x1100 {
+		b.Cells[i] = c
+		return
+	}
 
 	// Overwriting the continuation half of a wide rune blanks the rune.
 	if b.Cells[i].Rune == 0 && x > 0 && textwidth.Rune(b.Cells[i-1].Rune) == 2 {

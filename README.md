@@ -2,6 +2,8 @@
 
 A terminal UI runtime for Go, inspired by React and Elm.
 
+![tooey list demo — selection list with a modal confirm dialog and focus trapping](demos/list/demo.gif)
+
 Build full-screen terminal applications by composing declarative node trees. Tooey handles layout, diffing, and rendering — you just describe what the screen should look like.
 
 ```
@@ -287,9 +289,13 @@ The buffer is `width × height` cells. Each `Cell` holds a rune, foreground colo
 ## Demos
 
 ```bash
-go run ./demos/list      # Interactive list with selection and activation counter
+go run ./demos/list      # Interactive list with selection, modal confirm, and focus trapping
 go run ./demos/maude     # Chat TUI with tool blocks, markdown rendering, and diff highlighting
 ```
+
+![tooey maude demo — chat TUI with tool blocks and markdown](demos/maude/demo.gif)
+
+The GIFs are recorded with [vhs](https://github.com/charmbracelet/vhs) from the `demo.tape` scripts next to each demo.
 
 ## Requirements
 

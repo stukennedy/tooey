@@ -74,7 +74,13 @@ func layout(n node.Node, avail Rect) LayoutNode {
 
 func layoutText(n node.Node, avail Rect) LayoutNode {
 	pt, pr, pb, pl := padding(n)
-	lines := textLines(n, avail.W-pl-pr)
+	// An explicit Width narrower than the available space constrains
+	// wrapping, not just the final rect.
+	w := avail.W
+	if n.Props.Width > 0 && n.Props.Width < w {
+		w = n.Props.Width
+	}
+	lines := textLines(n, w-pl-pr)
 	h := len(lines) + pt + pb
 	if h > avail.H {
 		h = avail.H
@@ -313,7 +319,11 @@ func measureHeight(n node.Node, avail Rect) int {
 	pt, pr, pb, pl := padding(n)
 	switch n.Type {
 	case node.TextNode:
-		lines := textLines(n, avail.W-pl-pr)
+		w := avail.W
+		if n.Props.Width > 0 && n.Props.Width < w {
+			w = n.Props.Width
+		}
+		lines := textLines(n, w-pl-pr)
 		return len(lines) + pt + pb
 	case node.BoxNode:
 		b := 2 * borderInset(n)

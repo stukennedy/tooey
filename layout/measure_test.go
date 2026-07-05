@@ -40,6 +40,18 @@ func TestOverlayMeasuredByLargestLayer(t *testing.T) {
 	}
 }
 
+func TestExplicitWidthConstrainsWrapping(t *testing.T) {
+	// Explicit width narrower than the parent must wrap, not truncate.
+	lt := Layout(node.Column(node.Text("hello world").WithSize(5, 0)), 40, 10)
+	text := lt.Children[0]
+	if len(text.Lines) != 2 || text.Lines[0] != "hello" || text.Lines[1] != "world" {
+		t.Fatalf("expected wrap at explicit width, got %v", text.Lines)
+	}
+	if text.Rect.H != 2 {
+		t.Fatalf("height should cover wrapped lines, got %d", text.Rect.H)
+	}
+}
+
 func TestTextLayoutCachesLines(t *testing.T) {
 	lt := Layout(node.Text("hello world"), 5, 5)
 	if len(lt.Lines) != 2 {

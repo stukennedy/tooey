@@ -63,7 +63,10 @@ type ScrollMsg struct {
 
 // ClickMsg indicates a mouse click. Key is the key of the deepest keyed
 // node under the cursor ("" if none). Clicking a focusable node also
-// moves focus to it before Update runs.
+// moves focus to it before Update runs. While a focus scope (modal) is
+// active, clicks outside the scope report Key "" — background controls
+// cannot be activated or focused through a modal, but the ClickMsg
+// still arrives so apps can e.g. dismiss on outside click.
 type ClickMsg struct {
 	X, Y int
 	Key  string
@@ -124,6 +127,37 @@ type App[M any] struct {
 	Input io.Reader
 }
 
+// resolveClick converts a click hit path into the key to report,
+// moving focus to the clicked focusable. While a focus scope is active,
+// clicks that land outside the scope's subtree report no key and cannot
+// move focus.
+func resolveClick(path []layout.LayoutNode, fm *focus.Manager) string {
+	if fm.ActiveScope() != "" {
+		inScope := false
+		for _, ln := range path {
+			if ln.Node.Props.FocusScope {
+				inScope = true
+				break
+			}
+		}
+		if !inScope {
+			return ""
+		}
+	}
+	key := ""
+	for i := len(path) - 1; i >= 0; i-- {
+		props := path[i].Node.Props
+		if key == "" && props.Key != "" {
+			key = props.Key
+		}
+		if props.Focusable && props.Key != "" {
+			fm.Focus(props.Key)
+			break
+		}
+	}
+	return key
+}
+
 // Run starts the application main loop.
 func (a *App[M]) Run(ctx context.Context) error {
 	out := a.Output
@@ -180,17 +214,7 @@ func (a *App[M]) Run(ctx context.Context) error {
 		case input.MouseClick:
 			key := ""
 			if lastLayout != nil {
-				path := layout.HitTest(*lastLayout, k.MouseX, k.MouseY)
-				for i := len(path) - 1; i >= 0; i-- {
-					props := path[i].Node.Props
-					if key == "" && props.Key != "" {
-						key = props.Key
-					}
-					if props.Focusable && props.Key != "" {
-						fm.Focus(props.Key)
-						break
-					}
-				}
+				key = resolveClick(layout.HitTest(*lastLayout, k.MouseX, k.MouseY), fm)
 			}
 			return ClickMsg{X: k.MouseX, Y: k.MouseY, Key: key}
 		case input.Escape:

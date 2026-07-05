@@ -47,15 +47,14 @@ func main() {
     oldState, _ := term.MakeRaw(int(os.Stdin.Fd()))
     defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-    a := &app.App{
-        Init: func() interface{} {
+    a := &app.App[*model]{
+        Init: func() *model {
             return &model{
                 items:    []string{"Alpha", "Beta", "Gamma"},
                 selected: 0,
             }
         },
-        Update: func(m interface{}, msg app.Msg) app.UpdateResult {
-            mdl := m.(*model)
+        Update: func(mdl *model, msg app.Msg) app.UpdateResult[*model] {
             if km, ok := msg.(app.KeyMsg); ok {
                 switch km.Key.Type {
                 case input.Up:
@@ -63,13 +62,12 @@ func main() {
                 case input.Down:
                     if mdl.selected < len(mdl.items)-1 { mdl.selected++ }
                 case input.RuneKey:
-                    if km.Key.Rune == 'q' { return app.UpdateResult{Model: nil} }
+                    if km.Key.Rune == 'q' { return app.Quit(mdl) }
                 }
             }
             return app.NoCmd(mdl)
         },
-        View: func(m interface{}, focused string) node.Node {
-            mdl := m.(*model)
+        View: func(mdl *model, focused string) node.Node {
             items := make([]node.Node, len(mdl.items))
             for i, item := range mdl.items {
                 if i == mdl.selected {
@@ -104,14 +102,28 @@ node.Column(top, middle, bottom)                       // vertical layout
 node.Box(node.BorderRounded, child)                    // bordered container
 node.Spacer()                                          // flex filler
 
+node.Overlay(base, modal)                              // layered stack (modals, popups)
+node.Centered(child)                                   // center a child at intrinsic size
+
 // Chaining modifiers
 node.Column(items...).WithFlex(1).WithScrollToBottom()
 node.Text("ok").WithKey("btn").WithFocusable()
+node.Column(items...).WithPadding(1, 2, 1, 2)          // top, right, bottom, left
+node.Box(node.BorderRounded, body).WithBG(node.RGB(20, 20, 40))
 ```
 
 **Styles:** `Bold`, `Dim`, `Italic`, `Underline`, `Reverse`
 **Borders:** `BorderNone`, `BorderSingle`, `BorderDouble`, `BorderRounded`
-**Colors:** ANSI 256 palette (`node.Color(0)` through `node.Color(255)`, `0` = default)
+**Colors:**
+- ANSI 256 palette: `node.Color(1)` through `node.Color(255)` (`0` = terminal default)
+- Explicit palette black: `node.Ansi(0)`
+- 24-bit truecolor: `node.RGB(255, 128, 0)` — emitted as truecolor when the
+  terminal supports it (`COLORTERM`), otherwise downgraded to the nearest
+  palette entry (`ansi.SetTrueColor` overrides detection)
+
+Text is measured by **display width**, so CJK characters and emoji (two cells
+wide) lay out and diff correctly. The `textwidth` package exposes the
+measurement helpers.
 
 ## Async commands
 
@@ -137,7 +149,7 @@ func update(m interface{}, msg app.Msg) app.UpdateResult {
 }
 ```
 
-Return `app.UpdateResult{Model: nil}` to quit.
+Return `app.Quit(model)` to quit.
 
 ## Built-in messages
 
@@ -146,7 +158,13 @@ Return `app.UpdateResult{Model: nil}` to quit.
 | `app.KeyMsg` | Keyboard input (wraps `input.Key`) |
 | `app.ResizeMsg` | Terminal resize (SIGWINCH) |
 | `app.FocusMsg` | Terminal focus gained/lost |
-| `app.ScrollMsg` | Mouse scroll wheel |
+| `app.ScrollMsg` | Mouse scroll wheel (with cursor position) |
+| `app.ClickMsg` | Mouse click — carries `X`, `Y`, and the `Key` of the node under the cursor |
+| `app.PasteMsg` | Bracketed paste |
+
+Clicks are hit-tested against the rendered layout: clicking a focusable
+keyed node focuses it automatically, and `ClickMsg.Key` tells Update which
+node was clicked.
 
 ## Components
 
@@ -154,8 +172,24 @@ The `component` package provides stateful, reusable building blocks:
 
 - **`TextInput`** — Multi-line text input with cursor navigation, word wrap, Home/End/Up/Down support. Call `.Update(key)` in your Update function, `.Render(prefix, fg, bg)` in View.
 - **`List`** — Vertical selection list with highlight styling.
+- **`Table`** — Column-aligned rows (display-width aware) with header and selection highlight.
+- **`Tabs`** — Clickable horizontal tab bar.
+- **`Select`** — Dropdown with keyed, clickable options.
+- **`Progress`** — Progress bar.
+- **`Badge`**, **`Spinner`**, **`Steps`**, **`Collapsible`** — status and structure helpers.
 - **`TextBlock`** — Styled text span with optional key.
 - **`Box`** — Bordered container with title.
+
+## Overlays and modals
+
+`node.Overlay` stacks layers in the same rect — the first child is the base
+UI, later children paint on top. Give a modal box a background so it
+occludes what's beneath it:
+
+```go
+modal := node.Box(node.BorderRounded, content).WithSize(40, 9).WithBG(node.Color(236))
+return node.Overlay(mainUI, node.Centered(modal))
+```
 
 ## Focus management
 
@@ -190,6 +224,39 @@ ch, _ := client.Connect(ctx)
 
 // Send actions back to the server:
 sse.PostAction("http://localhost:8080/action", "submit", payload)
+```
+
+The `wire` package defines a language-neutral JSON format for node trees
+and actions, so the server can be written in anything:
+
+```go
+// Server side (or any language emitting the same JSON)
+data, _ := wire.Marshal(node.Column(node.Text("hello from the server")))
+
+// Client side: decode and hand to your View
+root, _ := wire.Unmarshal(data)
+```
+
+```json
+{"type":"column","children":[{"type":"text","props":{"text":"hello from the server"}}]}
+```
+
+Colors travel as palette integers or `"#RRGGBB"` strings, styles as
+`["bold","underline"]`, and `wire.Action{Name, Key, Value}` reports clicks
+and submissions back.
+
+## Testing your UI
+
+The `tooeytest` package renders a node tree at a fixed size and gives you
+the frame as text:
+
+```go
+func TestView(t *testing.T) {
+    tooeytest.AssertFrame(t, view(model), 20, 4, `
+        ┌────┐
+        │hi  │
+        └────┘`)
+}
 ```
 
 ## Render pipeline internals

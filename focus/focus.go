@@ -48,6 +48,18 @@ func (m *Manager) Current() string {
 	return m.focusables[m.current]
 }
 
+// Focus moves focus directly to the node with the given key, returning
+// true if the key is focusable in the current context.
+func (m *Manager) Focus(key string) bool {
+	for i, k := range m.focusables {
+		if k == key {
+			m.current = i
+			return true
+		}
+	}
+	return false
+}
+
 // Next moves focus to the next focusable node (Tab).
 func (m *Manager) Next() {
 	if len(m.focusables) == 0 {

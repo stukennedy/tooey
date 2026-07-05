@@ -38,9 +38,19 @@ type PasteMsg struct {
 	Text string
 }
 
-// ScrollMsg indicates a mouse scroll event. Delta is positive for scroll up, negative for scroll down.
+// ScrollMsg indicates a mouse scroll event. Delta is positive for scroll
+// up, negative for scroll down. X, Y is the cell under the cursor.
 type ScrollMsg struct {
 	Delta int
+	X, Y  int
+}
+
+// ClickMsg indicates a mouse click. Key is the key of the deepest keyed
+// node under the cursor ("" if none). Clicking a focusable node also
+// moves focus to it before Update runs.
+type ClickMsg struct {
+	X, Y int
+	Key  string
 }
 
 // Cmd is a function that runs asynchronously and returns a Msg.
@@ -134,6 +144,44 @@ func (a *App[M]) Run(ctx context.Context) error {
 	fm := focus.NewManager()
 
 	var prevBuf *cell.Buffer
+	var lastLayout *layout.LayoutNode
+
+	// toMsg translates a raw key event into an app message; nil means
+	// the event is consumed (e.g. mouse button release).
+	toMsg := func(k input.Key) Msg {
+		switch k.Type {
+		case input.FocusIn:
+			return FocusMsg{Focused: true}
+		case input.FocusOut:
+			return FocusMsg{Focused: false}
+		case input.MouseScrollUp:
+			return ScrollMsg{Delta: 3, X: k.MouseX, Y: k.MouseY}
+		case input.MouseScrollDown:
+			return ScrollMsg{Delta: -3, X: k.MouseX, Y: k.MouseY}
+		case input.MouseRelease:
+			return nil
+		case input.MouseClick:
+			key := ""
+			if lastLayout != nil {
+				path := layout.HitTest(*lastLayout, k.MouseX, k.MouseY)
+				for i := len(path) - 1; i >= 0; i-- {
+					props := path[i].Node.Props
+					if key == "" && props.Key != "" {
+						key = props.Key
+					}
+					if props.Focusable && props.Key != "" {
+						fm.Focus(props.Key)
+						break
+					}
+				}
+			}
+			return ClickMsg{X: k.MouseX, Y: k.MouseY, Key: key}
+		case input.Paste:
+			return PasteMsg{Text: k.Text}
+		default:
+			return KeyMsg{Key: k}
+		}
+	}
 
 	// Message channels
 	keyCh := input.ReadKeys(ctx, in)
@@ -156,19 +204,8 @@ func (a *App[M]) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			switch k.Type {
-			case input.FocusIn:
-				msgs = append(msgs, FocusMsg{Focused: true})
-			case input.FocusOut:
-				msgs = append(msgs, FocusMsg{Focused: false})
-			case input.MouseScrollUp:
-				msgs = append(msgs, ScrollMsg{Delta: 3})
-			case input.MouseScrollDown:
-				msgs = append(msgs, ScrollMsg{Delta: -3})
-			case input.Paste:
-				msgs = append(msgs, PasteMsg{Text: k.Text})
-			default:
-				msgs = append(msgs, KeyMsg{Key: k})
+			if m := toMsg(k); m != nil {
+				msgs = append(msgs, m)
 			}
 			needsRender = true
 		case r, ok := <-resizeCh:
@@ -196,15 +233,8 @@ func (a *App[M]) Run(ctx context.Context) error {
 					draining = false
 					continue
 				}
-				switch k.Type {
-				case input.FocusIn:
-					msgs = append(msgs, FocusMsg{Focused: true})
-				case input.FocusOut:
-					msgs = append(msgs, FocusMsg{Focused: false})
-				case input.Paste:
-					msgs = append(msgs, PasteMsg{Text: k.Text})
-				default:
-					msgs = append(msgs, KeyMsg{Key: k})
+				if m := toMsg(k); m != nil {
+					msgs = append(msgs, m)
 				}
 				needsRender = true
 			case cmdMsg := <-cmdCh:
@@ -265,6 +295,7 @@ func (a *App[M]) Run(ctx context.Context) error {
 		tree := a.View(model, fm.Current())
 		lt := layout.Layout(tree, width, height)
 		fm.Update(lt)
+		lastLayout = &lt
 
 		buf := cell.NewBuffer(width, height)
 		cell.Paint(buf, lt)

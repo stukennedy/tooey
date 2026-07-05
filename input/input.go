@@ -40,6 +40,7 @@ const (
 	FocusIn
 	FocusOut
 	MouseClick
+	MouseRelease
 	MouseScrollUp
 	MouseScrollDown
 	AltLeft
@@ -54,6 +55,9 @@ type Key struct {
 	Type KeyType
 	Rune rune
 	Text string // used for Paste events to carry the full pasted text
+
+	// MouseX, MouseY are 0-based cell coordinates for mouse events.
+	MouseX, MouseY int
 }
 
 // ResizeMsg indicates the terminal was resized.
@@ -409,33 +413,37 @@ func parseCSI(data []byte) (Key, int) {
 			return Key{Type: ShiftEnter}, 5
 		}
 	}
-	// SGR mouse: \x1b[<btn;x;yM or \x1b[<btn;x;ym
+	// SGR mouse: \x1b[<btn;x;yM (press) or \x1b[<btn;x;ym (release)
 	if len(data) >= 1 && data[0] == '<' {
 		for j := 1; j < len(data); j++ {
 			if data[j] == 'M' || data[j] == 'm' {
-				btn := parseSGRButton(data[1:j])
+				btn, x, y := parseSGRParams(data[1:j])
 				kt := MouseClick
-				switch btn {
-				case 64:
+				switch {
+				case btn == 64:
 					kt = MouseScrollUp
-				case 65:
+				case btn == 65:
 					kt = MouseScrollDown
+				case data[j] == 'm':
+					kt = MouseRelease
 				}
-				return Key{Type: kt}, j + 1
+				return Key{Type: kt, MouseX: x - 1, MouseY: y - 1}, j + 1
 			}
 		}
 	}
-	// Normal mouse: \x1b[M + 3 bytes (btn, x, y)
+	// Normal mouse: \x1b[M + 3 bytes (btn, x, y), coordinates offset by 32
 	if len(data) >= 1 && data[0] == 'M' && len(data) >= 4 {
 		btn := data[1] - 32
 		kt := MouseClick
 		switch btn {
+		case 3:
+			kt = MouseRelease
 		case 64:
 			kt = MouseScrollUp
 		case 65:
 			kt = MouseScrollDown
 		}
-		return Key{Type: kt}, 4
+		return Key{Type: kt, MouseX: int(data[2]) - 33, MouseY: int(data[3]) - 33}, 4
 	}
 	return Key{}, 0
 }
@@ -453,18 +461,24 @@ func skipCSI(data []byte) int {
 	return 0 // no final byte found — incomplete sequence
 }
 
-// parseSGRButton extracts the button number from SGR mouse data like "64;10;20".
-func parseSGRButton(data []byte) int {
-	n := 0
+// parseSGRParams extracts button, x, y from SGR mouse data like "0;10;20".
+// x and y are 1-based terminal coordinates.
+func parseSGRParams(data []byte) (btn, x, y int) {
+	vals := [3]int{}
+	idx := 0
 	for _, b := range data {
 		if b == ';' {
-			break
+			idx++
+			if idx > 2 {
+				break
+			}
+			continue
 		}
 		if b >= '0' && b <= '9' {
-			n = n*10 + int(b-'0')
+			vals[idx] = vals[idx]*10 + int(b-'0')
 		}
 	}
-	return n
+	return vals[0], vals[1], vals[2]
 }
 
 func decodeRune(data []byte) (rune, int) {

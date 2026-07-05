@@ -339,6 +339,12 @@ func wrapText(s string, maxWidth int) []string {
 
 	var lines []string
 	for _, paragraph := range strings.Split(s, "\n") {
+		// A line that already fits is kept verbatim, preserving
+		// internal spacing (e.g. aligned table columns).
+		if textwidth.String(paragraph) <= maxWidth {
+			lines = append(lines, paragraph)
+			continue
+		}
 		trimmed := strings.TrimLeft(paragraph, " \t")
 		leading := paragraph[:len(paragraph)-len(trimmed)]
 

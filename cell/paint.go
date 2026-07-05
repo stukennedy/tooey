@@ -169,6 +169,12 @@ func wrapText(s string, maxWidth int) []string {
 	rawLines := strings.Split(s, "\n")
 	var result []string
 	for _, raw := range rawLines {
+		// A line that already fits is kept verbatim, preserving
+		// internal spacing (e.g. aligned table columns).
+		if textwidth.String(raw) <= maxWidth {
+			result = append(result, raw)
+			continue
+		}
 		// Preserve leading whitespace
 		trimmed := strings.TrimLeft(raw, " \t")
 		leading := raw[:len(raw)-len(trimmed)]

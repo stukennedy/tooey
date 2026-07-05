@@ -51,38 +51,45 @@ type Cmd func() Msg
 type Sub func(send func(Msg)) Msg
 
 // UpdateResult is returned from Update: new model + optional async commands.
-type UpdateResult struct {
-	Model interface{}
+// Set Quit (via the Quit helper) to stop the application.
+type UpdateResult[M any] struct {
+	Model M
+	Quit  bool
 	Cmds  []Cmd
 	Subs  []Sub
 }
 
 // NoCmd returns an UpdateResult with no commands.
-func NoCmd(model interface{}) UpdateResult {
-	return UpdateResult{Model: model}
+func NoCmd[M any](model M) UpdateResult[M] {
+	return UpdateResult[M]{Model: model}
 }
 
 // WithCmd returns an UpdateResult with commands to execute.
-func WithCmd(model interface{}, cmds ...Cmd) UpdateResult {
-	return UpdateResult{Model: model, Cmds: cmds}
+func WithCmd[M any](model M, cmds ...Cmd) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Cmds: cmds}
 }
 
 // WithSub returns an UpdateResult with subscriptions.
-func WithSub(model interface{}, subs ...Sub) UpdateResult {
-	return UpdateResult{Model: model, Subs: subs}
+func WithSub[M any](model M, subs ...Sub) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Subs: subs}
 }
 
-// App defines an Elm-style TUI application.
-type App struct {
+// Quit returns an UpdateResult that stops the application.
+func Quit[M any](model M) UpdateResult[M] {
+	return UpdateResult[M]{Model: model, Quit: true}
+}
+
+// App defines an Elm-style TUI application over a model type M.
+type App[M any] struct {
 	// Init returns the initial model.
-	Init func() interface{}
+	Init func() M
 
 	// Update processes a message and returns the new model + optional commands.
-	// Return UpdateResult with nil Model to quit.
-	Update func(model interface{}, msg Msg) UpdateResult
+	// Return Quit(model) to stop the application.
+	Update func(model M, msg Msg) UpdateResult[M]
 
 	// View renders the model to a node tree.
-	View func(model interface{}, focused string) node.Node
+	View func(model M, focused string) node.Node
 
 	// Output writer (defaults to os.Stdout).
 	Output io.Writer
@@ -92,7 +99,7 @@ type App struct {
 }
 
 // Run starts the application main loop.
-func (a *App) Run(ctx context.Context) error {
+func (a *App[M]) Run(ctx context.Context) error {
 	out := a.Output
 	if out == nil {
 		out = os.Stdout
@@ -230,7 +237,7 @@ func (a *App) Run(ctx context.Context) error {
 		for _, msg := range msgs {
 			result := a.Update(model, msg)
 			model = result.Model
-			if model == nil {
+			if result.Quit {
 				return nil
 			}
 			// Launch async commands

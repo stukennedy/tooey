@@ -26,16 +26,15 @@ func main() {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	a := &app.App{
-		Init: func() interface{} {
+	a := &app.App[*model]{
+		Init: func() *model {
 			return &model{
 				items:    []string{"Alpha", "Beta", "Gamma", "Delta", "Epsilon"},
 				selected: 0,
 				counter:  0,
 			}
 		},
-		Update: func(m interface{}, msg app.Msg) app.UpdateResult {
-			mdl := m.(*model)
+		Update: func(mdl *model, msg app.Msg) app.UpdateResult[*model] {
 			switch msg := msg.(type) {
 			case app.KeyMsg:
 				switch msg.Key.Type {
@@ -51,15 +50,13 @@ func main() {
 					mdl.counter++
 				case input.RuneKey:
 					if msg.Key.Rune == 'q' {
-						return app.UpdateResult{Model: nil}
+						return app.Quit(mdl)
 					}
 				}
 			}
 			return app.NoCmd(mdl)
 		},
-		View: func(m interface{}, focused string) node.Node {
-			mdl := m.(*model)
-
+		View: func(mdl *model, focused string) node.Node {
 			items := make([]node.Node, len(mdl.items))
 			for i, item := range mdl.items {
 				prefix := "  "

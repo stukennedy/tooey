@@ -2,11 +2,6 @@ package component
 
 import "github.com/stukennedy/tooey/node"
 
-// Component is the interface for reusable UI components.
-type Component interface {
-	Render(model interface{}, focused string) node.Node
-}
-
 // TextBlock renders a styled text block.
 type TextBlock struct {
 	Key   string

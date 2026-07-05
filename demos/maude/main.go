@@ -107,8 +107,8 @@ func main() {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	a := &app.App{
-		Init: func() interface{} {
+	a := &app.App[*maudeModel]{
+		Init: func() *maudeModel {
 			w, h := input.TermSize()
 			return &maudeModel{
 				width:  w,
@@ -131,9 +131,7 @@ func main() {
 	}
 }
 
-func maudeUpdate(m interface{}, msg app.Msg) app.UpdateResult {
-	mdl := m.(*maudeModel)
-
+func maudeUpdate(mdl *maudeModel, msg app.Msg) app.UpdateResult[*maudeModel] {
 	switch msg := msg.(type) {
 	case app.ResizeMsg:
 		mdl.width, mdl.height = msg.Width, msg.Height
@@ -193,8 +191,7 @@ func maudeUpdate(m interface{}, msg app.Msg) app.UpdateResult {
 	return app.NoCmd(mdl)
 }
 
-func maudeView(m interface{}, focused string) node.Node {
-	mdl := m.(*maudeModel)
+func maudeView(mdl *maudeModel, focused string) node.Node {
 	w := mdl.width
 
 	// --- Status bar ---

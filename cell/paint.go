@@ -91,6 +91,19 @@ func paintText(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 }
 
 func paintBox(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
+	fg, bg, style := n.Props.FG, n.Props.BG, n.Props.Style
+
+	// A background fills the whole rect (so overlays occlude content
+	// beneath them); children paint over it afterwards.
+	if bg != 0 {
+		vis := intersect(r, clip)
+		for y := vis.Y; y < vis.Y+vis.H; y++ {
+			for x := vis.X; x < vis.X+vis.W; x++ {
+				buf.Set(x, y, Cell{Rune: ' ', FG: fg, BG: bg, Style: style})
+			}
+		}
+	}
+
 	if r.W < 2 || r.H < 2 {
 		return
 	}
@@ -106,8 +119,6 @@ func paintBox(buf *Buffer, n node.Node, r layout.Rect, clip layout.Rect) {
 	default:
 		return
 	}
-
-	fg, bg, style := n.Props.FG, n.Props.BG, n.Props.Style
 
 	setClipped := func(x, y int, ch rune) {
 		if x >= clip.X && x < clip.X+clip.W && y >= clip.Y && y < clip.Y+clip.H {

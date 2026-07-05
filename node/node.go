@@ -17,6 +17,7 @@ const (
 	ListNode
 	PaneNode
 	SpacerNode
+	OverlayNode
 )
 
 // Color represents a terminal color. The zero value is the terminal default.
@@ -176,6 +177,23 @@ func Spacer() Node {
 	return Node{Type: SpacerNode, Props: Props{FlexWeight: 1}}
 }
 
+// Overlay stacks children in the same rect: the first child is the base
+// layer, later children paint on top of it. Use for modals, popups, and
+// dropdowns. Compose with Centered (or Spacers) to position a layer.
+func Overlay(children ...Node) Node {
+	return Node{Type: OverlayNode, Children: children}
+}
+
+// Centered wraps a child so it renders centered in the available space.
+// The child keeps its intrinsic size.
+func Centered(child Node) Node {
+	return Column(
+		Spacer(),
+		Row(Spacer(), child, Spacer()),
+		Spacer(),
+	)
+}
+
 // WithKey sets the key on a node and returns it.
 func (n Node) WithKey(key string) Node {
 	n.Props.Key = key
@@ -198,6 +216,25 @@ func (n Node) WithSize(w, h int) Node {
 // WithFocusable marks the node as focusable.
 func (n Node) WithFocusable() Node {
 	n.Props.Focusable = true
+	return n
+}
+
+// WithFG sets the foreground color and returns the node.
+func (n Node) WithFG(c Color) Node {
+	n.Props.FG = c
+	return n
+}
+
+// WithBG sets the background color and returns the node. On a Box, a
+// background fills the interior — useful for modals over an Overlay.
+func (n Node) WithBG(c Color) Node {
+	n.Props.BG = c
+	return n
+}
+
+// WithStyle sets the style flags and returns the node.
+func (n Node) WithStyle(s StyleFlags) Node {
+	n.Props.Style = s
 	return n
 }
 

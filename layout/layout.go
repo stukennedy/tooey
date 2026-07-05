@@ -36,6 +36,8 @@ func layout(n node.Node, avail Rect) LayoutNode {
 		ln = layoutColumn(n, avail)
 	case node.BoxNode:
 		ln = layoutBox(n, avail)
+	case node.OverlayNode:
+		ln = layoutOverlay(n, avail)
 	case node.SpacerNode:
 		ln.Rect = avail
 	}
@@ -209,6 +211,17 @@ func layoutBox(n node.Node, avail Rect) LayoutNode {
 	return ln
 }
 
+// layoutOverlay stacks every child in the full available rect. Children
+// are painted in order, so later children appear on top.
+func layoutOverlay(n node.Node, avail Rect) LayoutNode {
+	ln := LayoutNode{Node: n, Rect: avail}
+	inner := insetPadding(avail, n)
+	for _, child := range n.Children {
+		ln.Children = append(ln.Children, layout(child, inner))
+	}
+	return ln
+}
+
 // padding returns a node's padding as (top, right, bottom, left).
 func padding(n node.Node) (int, int, int, int) {
 	return n.Props.PadTop, n.Props.PadRight, n.Props.PadBottom, n.Props.PadLeft
@@ -247,6 +260,12 @@ func measureWidth(n node.Node, avail Rect) int {
 			w += measureWidth(c, avail)
 		}
 		return w + pl + pr
+	case node.OverlayNode:
+		// The base layer defines the overlay's intrinsic size.
+		if len(n.Children) > 0 {
+			return measureWidth(n.Children[0], avail) + pl + pr
+		}
+		return avail.W
 	default:
 		return avail.W
 	}
@@ -286,6 +305,12 @@ func measureHeight(n node.Node, avail Rect) int {
 			}
 		}
 		return h + pt + pb
+	case node.OverlayNode:
+		// The base layer defines the overlay's intrinsic size.
+		if len(n.Children) > 0 {
+			return measureHeight(n.Children[0], avail) + pt + pb
+		}
+		return 1
 	default:
 		return 1
 	}
